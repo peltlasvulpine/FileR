@@ -9,6 +9,7 @@
 #include <fatdrvce.h>
 #include <fileioc.h>
 #include "icon/gfx.h"   /* convimg output: all icon sprites + palette */
+#include "viewer.h"    /* text viewer for .txt files */
 
 /* ---------- Layout ---------- */
 
@@ -677,218 +678,13 @@ static void move_selection(int delta) {
     needs_redraw = true;
 }
 
-/* ---------- Text viewer ---------- */
+/* ---------- Text viewer glue ---------- */
 
-#define VIEW_MAX       4096          /* bytes loaded from one file */
-#define VIEW_ROWS_MAX  512           /* wrapped rows kept in memory */
-#define VIEW_COLS      38            /* characters per row (8px font, 320px wide) */
-#define VIEW_TOP       20            /* first text row, below the title bar */
-#define VIEW_LINE_H    10
-#define VIEW_VISIBLE   ((SCREEN_H - STATUS_H - VIEW_TOP) / VIEW_LINE_H)
-#define FILE_BLOCK     512           /* bytes per block read by fat_ReadFile */
-
-static bool viewing = false;
-static char view_name[16];
-static char view_buf[VIEW_MAX + 1];
-static size_t view_len = 0;
-static uint16_t view_row[VIEW_ROWS_MAX];   /* start offset of each wrapped row */
-static int view_rows = 0;
-static int view_top = 0;                    /* first visible row */
-static bool view_truncated = false;
-static uint8_t view_block[FILE_BLOCK];
-static bool view_goto = false;      /* Graph was pressed: typing a row number */
-static int goto_val = 0;            /* row number typed so far */
-static int goto_digits = 0;         /* how many digits are typed */
-
-static bool has_txt_ext(const char *name) {
-    const char *dot = strrchr(name, '.');
-    if (!dot) return false;
-    return tolower((unsigned char)dot[1]) == 't' &&
-           tolower((unsigned char)dot[2]) == 'x' &&
-           tolower((unsigned char)dot[3]) == 't' &&
-           dot[4] == 0;
-}
-
-/* Splits view_buf into rows of at most VIEW_COLS characters, breaking at
- * newlines. The newline is consumed; a long line wraps onto the next row. */
-static void layout_view(void) {
-    size_t pos = 0;
-
-    view_rows = 0;
-    while (view_rows < VIEW_ROWS_MAX) {
-        size_t col = 0;
-        view_row[view_rows++] = (uint16_t)pos;
-        while (pos < view_len && view_buf[pos] != '\n' && col < VIEW_COLS) {
-            pos++;
-            col++;
-        }
-        if (pos < view_len && view_buf[pos] == '\n') pos++;
-        if (pos >= view_len) break;
-    }
-}
-
-/* Loads a text file from the drive into view_buf. Only the first VIEW_MAX
- * bytes are kept. Carriage returns are dropped, tabs become spaces, and
- * other unprintable bytes become '.'. */
-static bool load_text(const char *fpath) {
-    fat_file_t f;
-    uint32_t size, blocks, b, k, in_block;
-    size_t total = 0;
-    uint8_t c;
-
-    if (fat_OpenFile(&fat, fpath, 0, &f) != FAT_SUCCESS) return false;
-    size = fat_GetFileSize(&f);
-    blocks = (size + FILE_BLOCK - 1) / FILE_BLOCK;
-
-    for (b = 0; b < blocks && total < VIEW_MAX; b++) {
-        in_block = size - b * FILE_BLOCK;
-        if (in_block > FILE_BLOCK) in_block = FILE_BLOCK;
-        if (fat_ReadFile(&f, 1, view_block) != 1) break;
-        for (k = 0; k < in_block && total < VIEW_MAX; k++) {
-            c = view_block[k];
-            if (c == '\r') continue;
-            if (c == '\t') c = ' ';
-            else if (c != '\n' && (c < 32 || c > 126)) c = '.';
-            view_buf[total++] = (char)c;
-        }
-    }
-    view_buf[total] = 0;
-    view_len = total;
-    view_truncated = size > VIEW_MAX;
-    fat_CloseFile(&f);
-
-    layout_view();
-    return true;
-}
-
-static void view_clamp(void) {
-    int max_top = view_rows - VIEW_VISIBLE;
-    if (max_top < 0) max_top = 0;
-    if (view_top > max_top) view_top = max_top;
-    if (view_top < 0) view_top = 0;
-}
-
-static int digit_for_key(uint8_t key) {
-    switch (key) {
-        case sk_0: return 0;
-        case sk_1: return 1;
-        case sk_2: return 2;
-        case sk_3: return 3;
-        case sk_4: return 4;
-        case sk_5: return 5;
-        case sk_6: return 6;
-        case sk_7: return 7;
-        case sk_8: return 8;
-        case sk_9: return 9;
-        default:   return -1;
-    }
-}
-
-/* Graph opens "go to row"; digits type the row number; Enter jumps there;
- * Del erases a digit; Graph again cancels. Rows are numbered from 1. */
-static void view_goto_key(uint8_t key) {
-    int d = digit_for_key(key);
-
-    if (d >= 0) {
-        if (goto_digits < 4) {          /* at most 4 digits, up to 9999 */
-            goto_val = goto_val * 10 + d;
-            goto_digits++;
-        }
-    } else if (key == sk_Del) {
-        goto_val /= 10;
-        if (goto_digits > 0) goto_digits--;
-    } else if (key == sk_Enter) {
-        if (goto_val > 0) {
-            int row = goto_val > view_rows ? view_rows : goto_val;
-            view_top = row - 1;
-            view_clamp();
-        }
-        view_goto = false;
-    } else if (key == sk_Graph) {
-        view_goto = false;
-    }
-    needs_redraw = true;
-}
-
-/* Up/Down scroll a row, Left/Right a page, Enter or Del goes back to the list. */
-static void view_key(uint8_t key) {
-    if (view_goto) {
-        view_goto_key(key);
-        return;
-    }
-    if (key == sk_Graph) {
-        view_goto = true;
-        goto_val = 0;
-        goto_digits = 0;
-        needs_redraw = true;
-        return;
-    }
-    switch (key) {
-        case sk_Up:    view_top--; break;
-        case sk_Down:  view_top++; break;
-        case sk_Left:  view_top -= VIEW_VISIBLE; break;
-        case sk_Right: view_top += VIEW_VISIBLE; break;
-        case sk_Enter:
-        case sk_Del:
-            viewing = false;
-            needs_redraw = true;
-            return;
-        default:
-            return;
-    }
-    view_clamp();
-    needs_redraw = true;
-}
-
-static void draw_view(void) {
-    char line[VIEW_COLS + 1];
-    char info[40];
-    int i, n;
-    size_t k;
-
-    gfx_FillScreen(C_WHITE);
-
-    /* Title bar carries the file name as a header. */
-    gfx_SetColor(C_BLUE);
-    gfx_FillRectangle(0, 0, SCREEN_W, TITLE_H);
-    sprintf(info, "View: %s", view_name);
-    text_at(6, 6, info, C_WHITE, C_BLUE);
-
-    for (i = 0; i < VIEW_VISIBLE; i++) {
-        int row = view_top + i;
-        if (row >= view_rows) break;
-        k = view_row[row];
-        n = 0;
-        while (k < view_len && view_buf[k] != '\n' && n < VIEW_COLS) {
-            line[n++] = view_buf[k++];
-        }
-        line[n] = 0;
-        text_at(4, VIEW_TOP + i * VIEW_LINE_H, line, C_BLACK, C_WHITE);
-    }
-    if (view_len == 0) {
-        text_at(4, VIEW_TOP, "(empty file)", C_BLACK, C_WHITE);
-    }
-
-    gfx_SetColor(C_BLACK);
-    gfx_FillRectangle(0, SCREEN_H - STATUS_H, SCREEN_W, STATUS_H);
-    if (view_goto) {
-        sprintf(info, "Go to row: %d_", goto_val);
-    } else {
-        sprintf(info, "%d/%d%s", view_top + 1, view_rows > 0 ? view_rows : 1,
-                view_truncated ? " (cut)" : "");
-    }
-    text_at(6, SCREEN_H - STATUS_H + 3, info, C_WHITE, C_BLACK);
-    text_at(SCREEN_W - 88, SCREEN_H - STATUS_H + 3,
-            view_goto ? "Enter: jump" : "Enter: back", C_WHITE, C_BLACK);
-
-    gfx_SwapDraw();
-}
-
-/* Opens a .txt file from the current drive folder in the viewer. */
+/* Builds the drive path to the selected file and hands it to viewer.c. */
 static void open_viewer(const item_t *it) {
     char fpath[PATH_MAX + 16];
 
-    if (!has_txt_ext(it->name)) {
+    if (!viewer_can_open(it->name)) {
         set_status("Viewer only opens .txt files");
         return;
     }
@@ -897,15 +693,9 @@ static void open_viewer(const item_t *it) {
     } else {
         sprintf(fpath, "%s/%s", drive_path, it->name);
     }
-    if (!load_text(fpath)) {
+    if (!viewer_open(&fat, fpath, it->name)) {
         set_status("Could not open file");
-        return;
     }
-    strncpy(view_name, it->name, sizeof(view_name) - 1);
-    view_name[sizeof(view_name) - 1] = 0;
-    view_top = 0;
-    view_goto = false;
-    viewing = true;
 }
 
 /* Enter on the USB row: open the drive, or the partition list if there are several. */
@@ -1058,8 +848,8 @@ int main(void) {
             needs_redraw = true;
         }
         /* The viewer reads the drive, so leave it when the drive goes. */
-        if (!msd_ready && viewing) {
-            viewing = false;
+        if (!msd_ready && viewer_is_open()) {
+            viewer_close();
             needs_redraw = true;
         }
         if (msd_ready != last_ready) {
@@ -1071,8 +861,8 @@ int main(void) {
         key = os_GetCSC();
         if (key == sk_Clear) break;
 
-        if (viewing) {
-            view_key(key);
+        if (viewer_is_open()) {
+            if (viewer_key(key)) needs_redraw = true;
         } else if (search_typing) {
             search_key(key);
         } else {
@@ -1126,7 +916,7 @@ int main(void) {
             needs_redraw = true;
         }
         if (needs_redraw) {
-            if (viewing) draw_view(); else draw();
+            if (viewer_is_open()) viewer_draw(); else draw();
             needs_redraw = false;
         }
     }
