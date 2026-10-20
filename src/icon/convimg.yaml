@@ -1,0 +1,32 @@
+palettes:
+  - name: mypalette
+    fixed-entries:
+      - color: {index: 7, r: 255, g: 0, b: 255}
+    images: automatic
+
+converts:
+  - name: icons
+    palette: mypalette
+    transparent-index: 7
+    style: rlet
+    images:
+      - iconsImages/dirfilled.png
+      - iconsImages/dir.png
+      - iconsImages/file.png
+      - iconsImages/lock.png
+      - iconsImages/archive.png
+      - iconsImages/usb.png
+      - iconsImages/usbdisconnect.png
+      - iconsImages/var.png
+      - iconsImages/prgm.png
+      - iconsImages/app.png
+      - iconsImages/appvar.png
+
+
+outputs:
+  - type: c
+    include-file: gfx.h
+    palettes:
+      - mypalette
+    converts:
+      - icons
