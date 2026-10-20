@@ -8,7 +8,7 @@ Currently in development.
 
 ## Current capabilities & checklist
 
-- [ ] Read
+- [x] Read
 - [ ] Write
 - [x] List files
 - [x] Filter through files
@@ -21,8 +21,9 @@ Currently in development.
 
 ### Current limitations
 
-- Can't read/write
-- Can't copy programs
+- Can't edit/write
+- Can't copy programs to the calculator
+- Since `fileioc.h` doesn't expose apps, I can't add them into the filter list
 
 ### Filter meanings
 
@@ -43,10 +44,10 @@ Currently in development.
 | Enter | Open directory |
 | Clear | Exit FileR |
 
-### How to connect a USB drive to the calculator
+### How to format a USB device for the calculator
 
 > [!CAUTION]
-> **BACKUP DATA ON SAID USB DEVICE, AS THIS *CAN* & PROBABLY *WILL* REMOVE <u>ALL</u> DATA ON SAID USB DEVICE**
+> **BACKUP DATA ON SAID USB DEVICE, AS THIS *CAN* & MOST LIKELY *WILL* REMOVE <u>ALL</u> DATA ON SAID USB DEVICE**
 
 Please note that this only works with drives of **32 GB or less**
 

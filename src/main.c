@@ -41,19 +41,12 @@
 #define C_WHITE  0xFF
 #define C_BLUE   0x10
 
-/* App variables are only recognized if the toolchain defines this type. */
-#ifdef OS_TYPE_APP
-#define IS_APP(t) ((t) == OS_TYPE_APP)
-#else
-#define IS_APP(t) (0)
-#endif
-
 /* ---------- Types ---------- */
 
 enum location { LOC_CALC, LOC_PART, LOC_DRIVE };
-enum kind { KIND_USB, KIND_PARENT, KIND_PART, KIND_DIR, KIND_FILE, KIND_VAR, KIND_APP };
+enum kind { KIND_USB, KIND_PARENT, KIND_PART, KIND_DIR, KIND_FILE, KIND_VAR };
 enum storage_filter { STORE_ALL, STORE_ARCHIVE, STORE_RAM, STORE_COUNT };
-enum type_filter { TYPE_ALL, TYPE_APPVAR, TYPE_PRGM, TYPE_APP, TYPE_VAR, TYPE_COUNT };
+enum type_filter { TYPE_ALL, TYPE_APPVAR, TYPE_PRGM, TYPE_VAR, TYPE_COUNT };
 
 /* Which icon goes on top of the base file icon. */
 enum overlay { OV_NONE, OV_APPVAR, OV_PRGM, OV_APP, OV_VAR };
@@ -115,7 +108,7 @@ static char search[SEARCH_MAX] = "";
 static bool search_typing = false;
 
 static const char *storage_names[] = { "All", "Archive", "RAM" };
-static const char *type_names[]    = { "All", "AppVar", "Prgm", "App", "Var" };
+static const char *type_names[]    = { "All", "AppVar", "Prgm", "Var" };
 
 /* ---------- Status ---------- */
 
@@ -267,7 +260,6 @@ static const char *overlay_label(uint8_t ov) {
 
 /* Calculator variable -> overlay, from its OS type. */
 static uint8_t overlay_for_os_type(uint8_t type) {
-    if (IS_APP(type)) return OV_APP;
     if (type == OS_TYPE_APPVAR) return OV_APPVAR;
     if (type == OS_TYPE_PRGM || type == OS_TYPE_PROT_PRGM) return OV_PRGM;
     return OV_VAR;
@@ -293,7 +285,6 @@ static bool type_matches(uint8_t type) {
     switch (type_filter) {
         case TYPE_APPVAR: return type == OS_TYPE_APPVAR;
         case TYPE_PRGM:   return type == OS_TYPE_PRGM || type == OS_TYPE_PROT_PRGM;
-        case TYPE_APP:    return IS_APP(type);
         case TYPE_VAR:    return overlay_for_os_type(type) == OV_VAR;
         default:          return true;
     }
@@ -396,7 +387,7 @@ static void calc_refresh(void) {
         it = &items[item_count];
         strncpy(it->name, name, 8);
         it->name[8] = 0;
-        it->kind = IS_APP(type) ? KIND_APP : KIND_VAR;
+        it->kind = KIND_VAR;
         it->type = type;
         it->overlay = overlay_for_os_type(type);
         it->archived = archived;
@@ -576,7 +567,6 @@ static void draw_item_icon(const item_t *it, int y) {
             break;
         case KIND_FILE:
         case KIND_VAR:
-        case KIND_APP:
             draw_file_with_overlay(it->overlay, y);
             break;
         default:
@@ -610,8 +600,7 @@ static const char *item_right_label(const item_t *it) {
         case KIND_PART:   return "PART";
         case KIND_DIR:    return "DIR";
         case KIND_FILE:
-        case KIND_VAR:
-        case KIND_APP:    return overlay_label(it->overlay);
+        case KIND_VAR:    return overlay_label(it->overlay);
         default:          return NULL;
     }
 }
@@ -947,7 +936,7 @@ static void activate_selected(void) {
     it = &items[selected];
 
     /* Moving between lists starts fresh, so a search never carries over. */
-    navigates = it->kind != KIND_FILE && it->kind != KIND_VAR && it->kind != KIND_APP;
+    navigates = it->kind != KIND_FILE && it->kind != KIND_VAR;
     if (navigates) clear_search();
 
     switch (it->kind) {
@@ -1000,7 +989,6 @@ static void activate_selected(void) {
             break;
 
         case KIND_VAR:
-        case KIND_APP:
             set_status("Variable viewer not built yet");
             break;
     }
