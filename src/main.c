@@ -8,8 +8,10 @@
 #include <msddrvce.h>
 #include <fatdrvce.h>
 #include <fileioc.h>
+#include <sys/power.h>   /* boot_GetBatteryStatus, boot_BatteryCharging */
 #include "icon/gfx.h"   /* convimg output: all icon sprites + palette */
-#include "viewer.h"    /* text viewer for .txt files */
+#include "text_viewer.h"    /* text viewer for .txt files */
+#include "image_viewer.h"   /* image viewer for .bmp files */
 
 /* ---------- Layout ---------- */
 
@@ -40,7 +42,10 @@
  * leaves 0x00 black and 0xFF white as they are; 0x10 is the default blue. */
 #define C_BLACK  0x00
 #define C_WHITE  0xFF
-#define C_BLUE   0x10
+/* Palette slots outside mypalette (it uses 0..36). They are set at startup
+ * in restore_palette(). Using a slot inside mypalette would overwrite an icon color. */
+#define C_BLUE   0x32          /* title bar */
+#define C_SELECT 0x5F          /* selected row */
 
 /* ---------- Types ---------- */
 
@@ -50,7 +55,7 @@ enum storage_filter { STORE_ALL, STORE_ARCHIVE, STORE_RAM, STORE_COUNT };
 enum type_filter { TYPE_ALL, TYPE_APPVAR, TYPE_PRGM, TYPE_VAR, TYPE_COUNT };
 
 /* Which icon goes on top of the base file icon. */
-enum overlay { OV_NONE, OV_APPVAR, OV_PRGM, OV_APP, OV_VAR };
+enum overlay { OV_NONE, OV_APPVAR, OV_PRGM, OV_APP, OV_VAR, OV_TEXT, OV_HTML, OV_IMAGE };
 
 typedef struct {
     char name[16];
@@ -84,6 +89,7 @@ static fat_t fat;
 static bool msd_open = false;     /* msd_Open succeeded */
 static bool msd_ready = false;    /* device open and partitions found */
 static bool mounted = false;      /* FAT volume open on one partition */
+static bool fat_open = false;     /* fat_Open succeeded and fat_Close not yet called */
 
 static int part_count = 0;
 static uint32_t part_lba[MAX_PARTS];
@@ -133,7 +139,25 @@ static uint24_t write_stub(void *usr, uint32_t lba, uint24_t count, const void *
     return count;
 }
 
+/* Failure to open the drive. If the calculator is charging and no data is
+ * open, say so, since the cable is only supplying power. */
+static void usb_fail(const char *msg) {
+    if (boot_BatteryCharging()) {
+        set_status("Charging, no data received");
+    } else {
+        set_status(msg);
+    }
+}
+
 /* ---------- Mount / unmount ---------- */
+
+/* Closes the FAT volume if it is open. Safe to call when it isn't. */
+static void fat_close_volume(void) {
+    if (fat_open) {
+        fat_Close(&fat);
+        fat_open = false;
+    }
+}
 
 /* Reads each partition's FAT volume label. A partition without a readable
  * label keeps an empty string and is shown as "Part N" instead. */
@@ -141,9 +165,11 @@ static void read_part_labels(void) {
     char label[13];
     int i, n;
 
+    fat_close_volume();
     for (i = 0; i < part_count; i++) {
         part_label[i][0] = 0;
         if (fat_Open(&fat, read_cb, write_stub, NULL, part_lba[i]) != FAT_SUCCESS) continue;
+        fat_open = true;
         if (fat_GetVolumeLabel(&fat, label) == FAT_SUCCESS) {
             label[12] = 0;
             n = (int)strlen(label);
@@ -151,6 +177,7 @@ static void read_part_labels(void) {
             strncpy(part_label[i], label, 11);
             part_label[i][11] = 0;
         }
+        fat_close_volume();
     }
 }
 
@@ -162,12 +189,14 @@ static bool open_partition(int i) {
     /* Re-opening the FAT driver switches the volume, so any previous
      * partition is no longer the one being read. */
     mounted = false;
+    fat_close_volume();
     ferr = fat_Open(&fat, read_cb, write_stub, NULL, part_lba[i]);
     if (ferr != FAT_SUCCESS) {
         sprintf(buf, "Drive: FAT open failed (%d)", (int)ferr);
-        set_status(buf);
+        usb_fail(buf);
         return false;
     }
+    fat_open = true;
     mounted = true;
     set_status("USB drive mounted");
     return true;
@@ -181,15 +210,20 @@ static void mount_device(usb_device_t dev) {
     uint8_t n, i;
     char buf[40];
 
+    fat_close_volume();
+    if (msd_open) {                  /* enable without a disconnect: start clean */
+        msd_Close(&msd);
+        msd_open = false;
+    }
     if (msd_Open(&msd, dev) != MSD_SUCCESS) {
-        set_status("Drive: msd_Open failed");
+        usb_fail("Drive: msd_Open failed");
         return;
     }
     msd_open = true;
 
     n = msd_FindPartitions(&msd, parts, MAX_PARTS);
     if (n == 0) {
-        set_status("Drive: no partition found");
+        usb_fail("Drive: no partition found");
         return;
     }
 
@@ -209,6 +243,7 @@ static void mount_device(usb_device_t dev) {
 }
 
 static void unmount_device(void) {
+    fat_close_volume();
     mounted = false;
     msd_ready = false;
     part_count = 0;
@@ -219,6 +254,16 @@ static void unmount_device(void) {
     }
 }
 
+static uint8_t batt_level = 0;       /* last value read from the calculator */
+static bool batt_charging = false;
+
+/* Reads the battery from the calculator. Called now and then from the main
+ * loop, not on every redraw. */
+static void battery_poll(void) {
+    batt_level = boot_GetBatteryStatus();
+    batt_charging = boot_BatteryCharging() != 0;
+}
+
 /* ---------- USB event handler ---------- */
 
 static usb_error_t usb_handler(usb_event_t event, void *event_data,
@@ -227,16 +272,19 @@ static usb_error_t usb_handler(usb_event_t event, void *event_data,
 
     switch (event) {
         case USB_DEVICE_CONNECTED_EVENT:
+            battery_poll();
             /* Reset first; the device is set up in USB_DEVICE_ENABLED_EVENT. */
             usb_ResetDevice((usb_device_t)event_data);
             set_status("USB device found, resetting...");
             break;
 
         case USB_DEVICE_ENABLED_EVENT:
+            battery_poll();
             mount_device((usb_device_t)event_data);
             break;
 
         case USB_DEVICE_DISCONNECTED_EVENT:
+            battery_poll();
             unmount_device();
             set_status("USB drive removed");
             break;
@@ -255,6 +303,9 @@ static const char *overlay_label(uint8_t ov) {
         case OV_PRGM:   return "Prgm";
         case OV_APP:    return "App";
         case OV_VAR:    return "Var";
+        case OV_TEXT:   return "Text";
+        case OV_HTML:   return "HTML";
+        case OV_IMAGE:  return "Image";
         default:        return NULL;
     }
 }
@@ -266,10 +317,25 @@ static uint8_t overlay_for_os_type(uint8_t type) {
     return OV_VAR;
 }
 
-/* Drive file -> overlay, from its extension (.8xv, .8xp, .8xk; any case). */
+/* True if the extension after the last dot equals ext (any case). */
+static bool ext_equals(const char *dot, const char *ext) {
+    size_t n = strlen(ext);
+    size_t i;
+
+    if (strlen(dot) != n + 1) return false;
+    for (i = 0; i < n; i++) {
+        if (tolower((unsigned char)dot[1 + i]) != ext[i]) return false;
+    }
+    return true;
+}
+
+/* Drive file -> overlay, from its extension (any case). */
 static uint8_t overlay_for_filename(const char *name) {
     const char *dot = strrchr(name, '.');
     if (!dot) return OV_NONE;
+    if (ext_equals(dot, "txt")) return OV_TEXT;
+    if (ext_equals(dot, "html") || ext_equals(dot, "htm")) return OV_HTML;
+    if (ext_equals(dot, "png") || ext_equals(dot, "bmp")) return OV_IMAGE;
     if (tolower((unsigned char)dot[1]) != '8') return OV_NONE;
     if (tolower((unsigned char)dot[2]) != 'x') return OV_NONE;
     switch (tolower((unsigned char)dot[3])) {
@@ -546,6 +612,9 @@ static void draw_file_with_overlay(uint8_t overlay, int y) {
         case OV_PRGM:   draw_in_box(prgm, prgm_width, prgm_height, y);       break;
         case OV_APP:    draw_in_box(app, app_width, app_height, y);          break;
         case OV_VAR:    draw_in_box(var, var_width, var_height, y);          break;
+        case OV_TEXT:   draw_in_box(text, text_width, text_height, y);       break;
+        case OV_HTML:   draw_in_box(html, html_width, html_height, y);       break;
+        case OV_IMAGE:  draw_in_box(image, image_width, image_height, y);    break;
         default:        break;
     }
 }
@@ -576,7 +645,7 @@ static void draw_item_icon(const item_t *it, int y) {
 }
 
 static void draw_row(int y, const item_t *it, const char *right, bool sel) {
-    uint8_t bg = sel ? C_BLUE : C_WHITE;
+    uint8_t bg = sel ? C_SELECT : C_WHITE;
     uint8_t fg = sel ? C_WHITE : C_BLACK;
     int ty = y + (ROW_H - 8) / 2;
 
@@ -606,6 +675,31 @@ static const char *item_right_label(const item_t *it) {
     }
 }
 
+/* ---------- Battery ---------- */
+
+/* boot_GetBatteryStatus() gives a level 0-4. The juice sprite for that level
+ * is drawn first, then the frame on top: batt, or battchg while charging.
+ * The percentage is the level times 25, so it is approximate. */
+static void draw_battery(void) {
+    uint8_t level = batt_level;
+    bool charging = batt_charging && !msd_ready;  /* data open = not charging */
+    gfx_rletsprite_t *juice = NULL;
+    int x = SCREEN_W - 18;     /* 12px wide icon at the right of the title bar */
+    int y = 1;                 /* 18px tall, fits in the 20px title bar */
+
+    if (level > 4) level = 4;
+    switch (level) {
+        case 4: juice = batthi;     break;
+        case 3: juice = battmedhi;  break;
+        case 2: juice = battmedlow; break;
+        case 1: juice = battlow;    break;
+        default: break;
+    }
+    if (juice) gfx_RLETSprite(juice, x, y);
+    gfx_RLETSprite(charging ? battchg : batt, x, y);
+
+}
+
 static void draw(void) {
     char line[48];
     char path[PATH_MAX + 8];
@@ -621,6 +715,7 @@ static void draw(void) {
             location == LOC_CALC ? "Calculator" :
             location == LOC_PART ? "Partitions" : "USB Drive",
             C_WHITE, C_BLUE);
+    draw_battery();
 
     /* Path line and filters: black text on white */
     if (search_typing || search[0] != 0) {
@@ -680,21 +775,26 @@ static void move_selection(int delta) {
 
 /* ---------- Text viewer glue ---------- */
 
-/* Builds the drive path to the selected file and hands it to viewer.c. */
-static void open_viewer(const item_t *it) {
+/* Builds the drive path to the selected file and opens it in the viewer
+ * that matches its extension. */
+static void open_file(const item_t *it) {
     char fpath[PATH_MAX + 16];
 
-    if (!viewer_can_open(it->name)) {
-        set_status("Viewer only opens .txt files");
-        return;
+    if (viewer_can_open(it->name) || image_can_open(it->name)) {
+        if (strcmp(drive_path, "/") == 0) {
+            sprintf(fpath, "/%s", it->name);
+        } else {
+            sprintf(fpath, "%s/%s", drive_path, it->name);
+        }
     }
-    if (strcmp(drive_path, "/") == 0) {
-        sprintf(fpath, "/%s", it->name);
+    if (viewer_can_open(it->name)) {
+        if (!viewer_open(&fat, fpath, it->name)) set_status("Could not open file");
+    } else if (image_can_open(it->name)) {
+        if (!image_open(&fat, fpath, it->name)) {
+            set_status("Could not open image (BMP, 8 or 24-bit, max 640 wide)");
+        }
     } else {
-        sprintf(fpath, "%s/%s", drive_path, it->name);
-    }
-    if (!viewer_open(&fat, fpath, it->name)) {
-        set_status("Could not open file");
+        set_status("Only .txt, .html, .bmp files open");
     }
 }
 
@@ -775,7 +875,7 @@ static void activate_selected(void) {
             break;
 
         case KIND_FILE:
-            open_viewer(it);
+            open_file(it);
             break;
 
         case KIND_VAR:
@@ -822,6 +922,17 @@ static void search_key(uint8_t key) {
     needs_redraw = true;
 }
 
+/* ---------- Palette ---------- */
+
+/* Icon palette, plus the title bar blue in its own slot. The image viewer
+ * replaces the whole palette, so this runs again when an image closes. */
+static void restore_palette(void) {
+    uint16_t blue = gfx_RGBTo1555(0, 64, 192);
+    gfx_SetPalette(mypalette, sizeof_mypalette, 0);  /* icon colors */
+    gfx_SetPalette(&blue, sizeof(blue), C_BLUE);      /* title bar blue */
+    gfx_SetPalette(&blue, sizeof(blue), C_SELECT);    /* selected row blue */
+}
+
 /* ---------- Main ---------- */
 
 int main(void) {
@@ -829,9 +940,10 @@ int main(void) {
     bool last_ready = false;
 
     gfx_Begin();
-    gfx_SetPalette(mypalette, sizeof_mypalette, 0);  /* icon colors */
+    restore_palette();
     gfx_SetDrawBuffer();
 
+    battery_poll();
     usb_Init(usb_handler, NULL, NULL, USB_DEFAULT_INIT_FLAGS);
     calc_refresh();
 
@@ -852,6 +964,11 @@ int main(void) {
             viewer_close();
             needs_redraw = true;
         }
+        if (!msd_ready && image_is_open()) {
+            image_close();
+            restore_palette();
+            needs_redraw = true;
+        }
         if (msd_ready != last_ready) {
             last_ready = msd_ready;
             reset_view_position();
@@ -861,7 +978,12 @@ int main(void) {
         key = os_GetCSC();
         if (key == sk_Clear) break;
 
-        if (viewer_is_open()) {
+        if (image_is_open()) {
+            if (image_key(key)) {
+                restore_palette();
+                needs_redraw = true;
+            }
+        } else if (viewer_is_open()) {
             if (viewer_key(key)) needs_redraw = true;
         } else if (search_typing) {
             search_key(key);
@@ -916,11 +1038,13 @@ int main(void) {
             needs_redraw = true;
         }
         if (needs_redraw) {
-            if (viewer_is_open()) viewer_draw(); else draw();
+            if (viewer_is_open()) viewer_draw();
+            else if (!image_is_open()) draw();   /* image is drawn once, on open */
             needs_redraw = false;
         }
     }
 
+    fat_close_volume();
     if (msd_open) msd_Close(&msd);
     usb_Cleanup();
     gfx_End();

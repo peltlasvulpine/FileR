@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <fatdrvce.h>
-#include "viewer.h"
+#include "text_viewer.h"
 
 /* Layout and palette. These match main.c so the screen looks the same. */
 #define SCREEN_W       320
@@ -19,11 +19,12 @@
 #define STATUS_H       14
 #define C_BLACK        0x00
 #define C_WHITE        0xFF
-#define C_BLUE         0x10
+#define C_BLUE         0x32
 
 #define VIEW_MAX       4096          /* bytes kept in memory at once */
 #define VIEW_ROWS_MAX  1024          /* wrapped rows kept in memory */
-#define VIEW_COLS      38            /* characters per row (8px font, 320px wide) */
+#define VIEW_COLS      43            /* most characters in one row */
+#define VIEW_PX        312           /* widest a row may be in pixels (x=4 to x=316) */
 #define VIEW_TOP       20            /* first text row, below the title bar */
 #define VIEW_LINE_H    10
 #define VIEW_VISIBLE   ((SCREEN_H - STATUS_H - VIEW_TOP) / VIEW_LINE_H)
@@ -55,36 +56,79 @@ static void text_at(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
     gfx_PrintStringXY(s, x, y);
 }
 
-static bool has_txt_ext(const char *name) {
+/* True if the name ends in one of the extensions below (any case). HTML is
+ * shown as plain text, so its tags are visible. */
+static bool ext_is(const char *name, const char *ext) {
     const char *dot = strrchr(name, '.');
-    if (!dot) return false;
-    return tolower((unsigned char)dot[1]) == 't' &&
-           tolower((unsigned char)dot[2]) == 'x' &&
-           tolower((unsigned char)dot[3]) == 't' &&
-           dot[4] == 0;
+    size_t n = strlen(ext);
+    size_t i;
+
+    if (!dot || strlen(dot) != n + 1) return false;
+    for (i = 0; i < n; i++) {
+        if (tolower((unsigned char)dot[1 + i]) != ext[i]) return false;
+    }
+    return true;
 }
 
-/* Splits view_buf into rows of at most VIEW_COLS bytes, breaking at newlines.
- * The newline is consumed. If the row table fills up, the window is cut to
- * the bytes the rows cover, so nothing is shown that has no row. */
+static bool has_text_ext(const char *name) {
+    return ext_is(name, "txt") || ext_is(name, "html") || ext_is(name, "htm");
+}
+
+/* Finds where the row that starts at `start` ends. A row holds at most
+ * VIEW_COLS characters and VIEW_PX pixels. If a word doesn't fit, the row breaks at the space before
+ * it, so words are not split. Only a word longer than a whole row is cut.
+ * Returns the end of the row's text (exclusive) and sets *next to where the
+ * following row starts (past any space or newline that was skipped). */
+/* Pixel width of one byte as it is drawn (see viewer_draw). The font is not
+ * monospaced, so rows are limited by width as well as by character count. */
+static int char_px(char c) {
+    if (c == '\r') return 0;
+    if (c == '\t') c = ' ';
+    else if (c < 32 || c > 126) c = '.';
+    return gfx_GetCharWidth(c);
+}
+
+static size_t row_end(size_t start, size_t *next) {
+    size_t pos = start, col = 0;
+    int px = 0;
+
+    while (pos < view_len && view_buf[pos] != '\n') {
+        if (col == VIEW_COLS || px + char_px(view_buf[pos]) > VIEW_PX) {
+            size_t sp = pos;   /* first byte that doesn't fit */
+            if (view_buf[pos] == ' ') {          /* row ends exactly at a space */
+                *next = pos + 1;
+                return pos;
+            }
+            while (sp > start && view_buf[sp - 1] != ' ') sp--;
+            if (sp > start) {                    /* break before the last word */
+                *next = sp;
+                return sp - 1;                   /* the space at sp-1 is dropped */
+            }
+            *next = pos;                         /* one long word: hard cut */
+            return pos;
+        }
+        px += char_px(view_buf[pos]);
+        pos++;
+        col++;
+    }
+    /* Ended at a newline (consumed) or at the end of the window. */
+    *next = (pos < view_len) ? pos + 1 : pos;
+    return pos;
+}
+
+/* Splits view_buf into rows with row_end(). If the row table fills up, the
+ * window is cut to the bytes the rows cover, so nothing is shown without a row. */
 static void layout_view(void) {
-    size_t pos = 0;
+    size_t pos = 0, next;
 
     view_rows = 0;
     while (view_rows < VIEW_ROWS_MAX) {
-        size_t col = 0;
         view_row[view_rows++] = (uint16_t)pos;
-        while (pos < view_len && view_buf[pos] != '\n' && col < VIEW_COLS) {
-            pos++;
-            col++;
-        }
-        if (pos < view_len && view_buf[pos] == '\n') pos++;
-        if (pos >= view_len) {
-            view_len = view_len;   /* whole window laid out */
-            return;
-        }
+        row_end(pos, &next);
+        if (next >= view_len) return;   /* whole window laid out */
+        pos = next;
     }
-    view_len = pos;                /* row table full: keep only covered bytes */
+    view_len = pos;                     /* row table full: keep only covered bytes */
 }
 
 static void view_clamp(void) {
@@ -193,7 +237,7 @@ static void view_goto_key(uint8_t key) {
 }
 
 bool viewer_can_open(const char *name) {
-    return has_txt_ext(name);
+    return has_text_ext(name);
 }
 
 bool viewer_open(fat_t *fat, const char *fpath, const char *name) {
@@ -247,7 +291,7 @@ void viewer_draw(void) {
     char line[VIEW_COLS + 1];
     char info[40];
     int i, n;
-    size_t k;
+    size_t k, end;
     uint32_t pct = 100;
 
     gfx_FillScreen(C_WHITE);
@@ -261,9 +305,11 @@ void viewer_draw(void) {
     for (i = 0; i < VIEW_VISIBLE; i++) {
         int row = view_top + i;
         if (row >= view_rows) break;
+        size_t after;
         k = view_row[row];
+        end = row_end(k, &after);
         n = 0;
-        while (k < view_len && view_buf[k] != '\n' && n < VIEW_COLS) {
+        while (k < end) {
             char c = view_buf[k++];
             if (c == '\r') continue;
             if (c == '\t') c = ' ';
@@ -283,7 +329,7 @@ void viewer_draw(void) {
         sprintf(info, "Go to %%: %d_", goto_val);
     } else {
         if (view_size > 0) pct = (top_offset() * 100) / view_size;
-        sprintf(info, "%lu%%", (unsigned long)pct);
+        sprintf(info, "%d%%", (int)pct);
     }
     text_at(6, SCREEN_H - STATUS_H + 3, info, C_WHITE, C_BLACK);
     text_at(SCREEN_W - 88, SCREEN_H - STATUS_H + 3,

@@ -7,17 +7,26 @@ extern "C" {
 
 #include "mypalette.h"
 #define icons_palette_offset 0
-#include "dirfilled.h"
-#include "dir.h"
-#include "file.h"
-#include "lock.h"
+#include "app.h"
+#include "appvar.h"
 #include "archive.h"
+#include "batt.h"
+#include "battchg.h"
+#include "batthi.h"
+#include "battlow.h"
+#include "battmedhi.h"
+#include "battmedlow.h"
+#include "dir.h"
+#include "dirfilled.h"
+#include "file.h"
+#include "html.h"
+#include "image.h"
+#include "lock.h"
+#include "prgm.h"
+#include "text.h"
 #include "usb.h"
 #include "usbdisconnect.h"
 #include "var.h"
-#include "prgm.h"
-#include "app.h"
-#include "appvar.h"
 
 #ifdef __cplusplus
 }

@@ -8,11 +8,13 @@ Currently in development.
 
 ## Current capabilities & checklist
 
-- [x] Read
-- [ ] Write
+- [x] Read files
+- [ ] Write to files
 - [x] List files
 - [x] Filter through files
 - [x] Nice(ish) UI
+- [x] Battery display
+- [x] Charging handling(ish)
 - [ ] Icon support
 - [x] USB support
 - [x] USB partition support
@@ -24,6 +26,15 @@ Currently in development.
 - Can't edit/write
 - Can't copy programs to the calculator
 - Since `fileioc.h` doesn't expose apps, I can't add them into the filter list
+
+### Supported Filetypes
+
+These are the currently supported filetypes (to open)
+
+- `.txt`
+- `.html`
+- `.htm`
+- `.bmp` (uncompressed)
 
 ### Filter meanings
 

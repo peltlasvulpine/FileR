@@ -10,19 +10,7 @@ converts:
     transparent-index: 7
     style: rlet
     images:
-      - iconsImages/dirfilled.png
-      - iconsImages/dir.png
-      - iconsImages/file.png
-      - iconsImages/lock.png
-      - iconsImages/archive.png
-      - iconsImages/usb.png
-      - iconsImages/usbdisconnect.png
-      - iconsImages/var.png
-      - iconsImages/prgm.png
-      - iconsImages/app.png
-      - iconsImages/appvar.png
-
-
+      - iconsImages/*.png
 outputs:
   - type: c
     include-file: gfx.h
