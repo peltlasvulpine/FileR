@@ -47,6 +47,10 @@
 #define C_BLUE   0x32          /* title bar */
 #define C_SELECT 0x7B          /* selected row */
 
+/* Colors, as 8-bit RGB: { red, green, blue }. Change these to recolor the title bar and selected row. */
+static const uint8_t TITLE_RGB[3]  = { 44, 100, 212 };   /* title bar */
+static const uint8_t SELECT_RGB[3] = { 130, 182, 245 };  /* selected row */
+
 /* ---------- Types ---------- */
 
 enum location { LOC_CALC, LOC_PART, LOC_DRIVE };
@@ -927,10 +931,11 @@ static void search_key(uint8_t key) {
 /* Icon palette, plus the title bar blue in its own slot. The image viewer
  * replaces the whole palette, so this runs again when an image closes. */
 static void restore_palette(void) {
-    uint16_t blue = gfx_RGBTo1555(0, 64, 192);
+    uint16_t title  = gfx_RGBTo1555(TITLE_RGB[0], TITLE_RGB[1], TITLE_RGB[2]);
+    uint16_t select = gfx_RGBTo1555(SELECT_RGB[0], SELECT_RGB[1], SELECT_RGB[2]);
     gfx_SetPalette(mypalette, sizeof_mypalette, 0);  /* icon colors */
-    gfx_SetPalette(&blue, sizeof(blue), C_BLUE);      /* title bar blue */
-    gfx_SetPalette(&blue, sizeof(blue), C_SELECT);    /* selected row blue */
+    gfx_SetPalette(&title,  sizeof(title),  C_BLUE);    /* title bar */
+    gfx_SetPalette(&select, sizeof(select), C_SELECT);  /* selected row */
 }
 
 /* ---------- Main ---------- */
