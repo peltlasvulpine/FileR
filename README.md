@@ -102,8 +102,8 @@ sudo dnf install gparted
 4. Unmount all partitions.
 5. Select "*Create Partition Table...*" under "*Device*" and set the *Partition Table Type* dropdown to "*msdos*" or "*MBR*" (This is the part that wipes the USB)
 6. After the operation finishes, right-click the unallocated space & select "*New*"
-7. Change *File system* to FAT32
-8. Edit other settings to your liking
+7. Change *File system* to FAT32.
+8. Edit other settings to your liking.
 9. Select "*Add*" & confirm the operation.
 
 #### macOS
