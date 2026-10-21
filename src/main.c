@@ -45,7 +45,7 @@
 /* Palette slots outside mypalette (it uses 0..36). They are set at startup
  * in restore_palette(). Using a slot inside mypalette would overwrite an icon color. */
 #define C_BLUE   0x32          /* title bar */
-#define C_SELECT 0x5F          /* selected row */
+#define C_SELECT 0x7B          /* selected row */
 
 /* ---------- Types ---------- */
 
