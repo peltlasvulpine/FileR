@@ -12,6 +12,9 @@
 #include "icon/gfx.h"   /* convimg output: all icon sprites + palette */
 #include "text_viewer.h"    /* text viewer for .txt files */
 #include "image_viewer.h"   /* image viewer for .bmp files */
+#include "var_info.h"     /* info panel for calculator variables */
+#include "keys.h"         /* 2nd and alpha modifiers */
+#include <time.h>          /* clock(): status message timeouts */
 
 /* ---------- Layout ---------- */
 
@@ -37,6 +40,8 @@
 #define ARCHIVE_X     (SCREEN_W - 100)
 #define LOCK_X        (SCREEN_W - 80)
 #define LABEL_X       (SCREEN_W - 60)
+#define PRGM_ICON_X   (ARCHIVE_X - ICON_W - 2)   /* program's own icon, left of archive */
+#define PRGM_TRANSPARENT 0xDF   /* palette index treated as see-through in program icons */
 
 /* Palette indices. The icon palette (mypalette) fills entries 0..13 and
  * leaves 0x00 black and 0xFF white as they are; 0x10 is the default blue. */
@@ -69,22 +74,6 @@ typedef struct {
     bool archived;      /* calculator variables only */
 } item_t;
 
-/* Maps a calculator key to a search letter. Letters are typed directly
- * while search is active, so no Alpha lock is needed. */
-typedef struct {
-    uint8_t key;
-    char ch;
-} letter_key_t;
-
-static const letter_key_t letter_keys[] = {
-    { sk_Math, 'a' },  { sk_Apps, 'b' },   { sk_Prgm, 'c' },   { sk_Recip, 'd' },
-    { sk_Sin, 'e' },   { sk_Cos, 'f' },    { sk_Tan, 'g' },    { sk_Power, 'h' },
-    { sk_Square, 'i' },{ sk_Comma, 'j' },  { sk_LParen, 'k' }, { sk_RParen, 'l' },
-    { sk_Div, 'm' },   { sk_Log, 'n' },    { sk_7, 'o' },      { sk_8, 'p' },
-    { sk_9, 'q' },     { sk_Mul, 'r' },    { sk_Ln, 's' },     { sk_4, 't' },
-    { sk_5, 'u' },     { sk_6, 'v' },      { sk_Sub, 'w' },    { sk_Store, 'x' },
-    { sk_1, 'y' },     { sk_2, 'z' },
-};
 
 /* ---------- State ---------- */
 
@@ -116,7 +105,11 @@ static int top = 0;
 static bool needs_redraw = true;
 
 static char search[SEARCH_MAX] = "";
-static bool search_typing = false;
+static bool search_mode = false;   /* y= : letters type into the search */
+
+#define STATUS_SECONDS 5
+static uint32_t status_at = 0;     /* clock() value when the message was set */
+static bool status_timed = false;  /* message clears after STATUS_SECONDS */
 
 static const char *storage_names[] = { "All", "Archive", "RAM" };
 static const char *type_names[]    = { "All", "AppVar", "Prgm", "Var" };
@@ -127,6 +120,8 @@ static void set_status(const char *s) {
     strncpy(status, s, sizeof(status) - 1);
     status[sizeof(status) - 1] = 0;
     status_changed = true;
+    status_at = (uint32_t)clock();
+    status_timed = true;
 }
 
 /* ---------- FAT callbacks ---------- */
@@ -416,7 +411,6 @@ static void apply_search(void) {
 
 static void clear_search(void) {
     search[0] = 0;
-    search_typing = false;
 }
 
 /* ---------- Data refresh ---------- */
@@ -592,6 +586,26 @@ static void strip_trailing_slash(char *s) {
 
 /* ---------- Drawing ---------- */
 
+/* Size of the selected USB file, if the list is on the drive and a file is highlighted. */
+static bool selected_drive_file_size(uint32_t *size) {
+    fat_file_t f;
+    char fpath[PATH_MAX + 16];
+    item_t *it;
+
+    if (location != LOC_DRIVE || item_count == 0) return false;
+    it = &items[selected];
+    if (it->kind != KIND_FILE) return false;
+    if (strcmp(drive_path, "/") == 0) {
+        sprintf(fpath, "/%s", it->name);
+    } else {
+        sprintf(fpath, "%s/%s", drive_path, it->name);
+    }
+    if (fat_OpenFile(&fat, fpath, 0, &f) != FAT_SUCCESS) return false;
+    *size = fat_GetFileSize(&f);
+    fat_CloseFile(&f);
+    return true;
+}
+
 /* Sets fg, bg and transparent color together so text never inherits a
  * stale color. The transparent color equals bg, so text is drawn over the
  * background that was filled first. */
@@ -600,6 +614,20 @@ static void text_at(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
     gfx_SetTextBGColor(bg);
     gfx_SetTextTransparentColor(bg);
     gfx_PrintStringXY(s, x, y);
+}
+
+/* Key labels across the bottom bar, each centered under its top key (y=, Window,
+ * Zoom, Trace, Graph) with the screen split into five equal columns. */
+static void draw_key_legend(int y) {
+    static const char *labels[5] = { "Search", "", "", "", "Store" };
+    int i, cx, w;
+
+    for (i = 0; i < 5; i++) {
+        if (!labels[i][0]) continue;
+        cx = i * (SCREEN_W / 5) + (SCREEN_W / 5) / 2;
+        w = (int)gfx_GetStringWidth(labels[i]);
+        text_at(cx - w / 2, y, labels[i], C_WHITE, C_BLACK);
+    }
 }
 
 /* Draws a sprite centered inside the left icon box at row y. */
@@ -623,6 +651,130 @@ static void draw_file_with_overlay(uint8_t overlay, int y) {
     }
 }
 
+static bool is_prgm_type(uint8_t type) {
+    return type == OS_TYPE_PRGM || type == OS_TYPE_PROT_PRGM;
+}
+
+/* A program's icon, read from the file: 16x16, one palette byte per pixel,
+ * after a 3-byte jump, a 0x01 marker and the 0x10 0x10 size. Stored in
+ * gfx_sprite_t layout (width, height, pixels) so it can be drawn directly. */
+#define ICON_PIXELS 256
+static uint8_t icon_sprite[2 + ICON_PIXELS];
+
+#define ICON_SCAN 32   /* how far into the program to look for the icon header */
+
+/* Finds the icon in the first ICON_SCAN bytes. A jump (C3) is followed within a
+ * few bytes by the marker 0x01 and the size 0x10 0x10; the 256 pixel bytes start
+ * right after that. Returns the offset of the pixels, or -1 if not found. */
+static int find_icon_header(const uint8_t *buf, int n) {
+    int i, j;
+    for (i = 0; i < n; i++) {
+        if (buf[i] != 0xC3) continue;
+        for (j = i + 3; j + 3 <= n && j <= i + 8; j++) {
+            if (buf[j] == 0x01 && buf[j + 1] == 16 && buf[j + 2] == 16) {
+                return j + 3;
+            }
+        }
+    }
+    return -1;
+}
+
+/* TI-BASIC icon: the marker 2A 3F 3E 2A within the first 128 bytes, then 256
+ * bytes, one ASCII hex digit per pixel ('0'-'9', 'A'-'F'). Each digit selects a
+ * palette index from basic_palette. */
+#define BASIC_SCAN   128
+#define BASIC_PIXELS 256
+static uint8_t basic_head[BASIC_SCAN];
+static uint8_t basic_pix[BASIC_PIXELS];
+
+static const uint8_t basic_palette[16] = {
+    0xDF, 0x18, 0xE0, 0x00, 0xF8, 0x06, 0xE4, 0x60,
+    0x10, 0x1D, 0xE7, 0xFF, 0xDE, 0xBD, 0x94, 0x4A
+};
+
+#define TI_PAL_BASE 0x80            /* slots 0x80..0x8F hold the 16 TI-BASIC colors */
+static uint16_t ti_pal[16];         /* the TI colors, copied from the startup palette */
+
+/* Pixel value for one TI-BASIC icon character: the TI color slot, or the
+ * transparent index where the color is 0xDF. White if it isn't a hex digit. */
+static uint8_t basic_color(uint8_t ch) {
+    uint8_t d;
+    if (ch >= '0' && ch <= '9') d = ch - '0';
+    else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
+    else return C_WHITE;
+    if (basic_palette[d] == PRGM_TRANSPARENT) return PRGM_TRANSPARENT;
+    return TI_PAL_BASE + d;
+}
+
+static bool icon_transparent = false;   /* true when the current icon is TI-BASIC (0xDF sees through) */
+
+/* Searches the first half of the program for the marker, a chunk at a time. */
+static bool read_basic_icon(const item_t *it) {
+    uint8_t h;
+    size_t size, limit, pos = 0;
+    int got, i;
+    long marker = -1;
+    bool found = false;
+
+    h = ti_OpenVar(it->name, "r", it->type);
+    if (!h) return false;
+    size = ti_GetSize(h);
+    limit = size / 2;
+    while (!found && pos < limit) {
+        if (ti_Seek((int)pos, SEEK_SET, h) == EOF) break;
+        got = (int)ti_Read(basic_head, 1, BASIC_SCAN, h);
+        for (i = 0; i + 4 <= got; i++) {
+            if (basic_head[i] == 0x2A && basic_head[i + 1] == 0x3F &&
+                basic_head[i + 2] == 0x3E && basic_head[i + 3] == 0x2A) {
+                marker = (long)pos + i;
+                found = true;
+                break;
+            }
+        }
+        if (got < 4 || got - 3 <= 0) break;
+        pos += (size_t)(got - 3);   /* overlap 3 bytes so a marker across the edge is found */
+    }
+    if (found && ti_Seek((int)marker + 4, SEEK_SET, h) != EOF &&
+        ti_Read(basic_pix, 1, BASIC_PIXELS, h) == BASIC_PIXELS) {
+        int k;
+        for (k = 0; k < BASIC_PIXELS; k++) {
+            icon_sprite[2 + k] = basic_color(basic_pix[k]);
+        }
+        icon_sprite[0] = 16;
+        icon_sprite[1] = 16;
+        icon_transparent = true;
+    } else {
+        found = false;
+    }
+    ti_Close(h);
+    return found;
+}
+
+static bool read_prgm_icon(const item_t *it) {
+    uint8_t head[ICON_SCAN];
+    uint8_t h;
+    int n, at;
+    bool ok = false;
+
+    h = ti_OpenVar(it->name, "r", it->type);
+    if (!h) return false;
+    n = (int)ti_Read(head, 1, ICON_SCAN, h);
+    at = find_icon_header(head, n);
+    if (at >= 0 &&
+        ti_Seek(at, SEEK_SET, h) != EOF &&
+        ti_Read(icon_sprite + 2, 1, ICON_PIXELS, h) == ICON_PIXELS) {
+        ok = true;
+    }
+    ti_Close(h);
+    if (ok) {
+        icon_sprite[0] = 16;
+        icon_sprite[1] = 16;
+        icon_transparent = false;
+        return true;
+    }
+    return read_basic_icon(it);
+}
+
 static void draw_item_icon(const item_t *it, int y) {
     switch (it->kind) {
         case KIND_USB:
@@ -640,6 +792,8 @@ static void draw_item_icon(const item_t *it, int y) {
             draw_in_box(dir, dir_width, dir_height, y);
             break;
         case KIND_FILE:
+            draw_file_with_overlay(it->overlay, y);
+            break;
         case KIND_VAR:
             draw_file_with_overlay(it->overlay, y);
             break;
@@ -664,6 +818,14 @@ static void draw_row(int y, const item_t *it, const char *right, bool sel) {
     }
     if (it->kind == KIND_VAR && it->type == OS_TYPE_PROT_PRGM) {
         gfx_RLETSprite(lock, LOCK_X, y + (ROW_H - lock_height) / 2);
+    }
+    if (it->kind == KIND_VAR && is_prgm_type(it->type) && read_prgm_icon(it)) {
+        if (icon_transparent) {
+            gfx_SetTransparentColor(PRGM_TRANSPARENT);
+            gfx_TransparentSprite((gfx_sprite_t *)icon_sprite, PRGM_ICON_X, y + (ROW_H - 16) / 2);
+        } else {
+            gfx_Sprite((gfx_sprite_t *)icon_sprite, PRGM_ICON_X, y + (ROW_H - 16) / 2);
+        }
     }
     if (right) text_at(LABEL_X, ty, right, fg, bg);
 }
@@ -720,11 +882,12 @@ static void draw(void) {
             location == LOC_PART ? "Partitions" : "USB Drive",
             C_WHITE, C_BLUE);
     draw_battery();
+    keys_draw(SCREEN_W - 18, 1);   /* left of the battery, which is at SCREEN_W - 18 */
 
     /* Path line and filters: black text on white */
-    if (search_typing || search[0] != 0) {
+    if (search_mode || search[0] != 0) {
         sprintf(line, "Find: %s%s   (%d shown)", search,
-                search_typing ? "_" : "", item_count - 1);
+                search_mode ? "_" : "", item_count - 1);
     } else if (location == LOC_CALC) {
         sprintf(line, "Path: /   Store: %s   Type: %s",
                 storage_names[store_filter], type_names[type_filter]);
@@ -736,6 +899,14 @@ static void draw(void) {
         sprintf(line, "Path: %s   (%d items)", path, item_count - 1);
     }
     text_at(6, FILTER_Y + 2, line, C_BLACK, C_WHITE);
+    {
+        uint32_t fsize;
+        if (selected_drive_file_size(&fsize)) {
+            char sz[24];
+            sprintf(sz, "%lu bytes", (unsigned long)fsize);
+            text_at(SCREEN_W - 80, FILTER_Y + 2, sz, C_BLACK, C_WHITE);
+        }
+    }
 
     /* List */
     if (item_count == 0) {
@@ -750,17 +921,56 @@ static void draw(void) {
         draw_row(y, it, item_right_label(it), idx == selected);
     }
 
+    if (var_info_is_open()) var_info_draw();
+
     /* Status bar: white text on black */
     gfx_SetColor(C_BLACK);
     gfx_FillRectangle(0, SCREEN_H - STATUS_H, SCREEN_W, STATUS_H);
-    text_at(6, SCREEN_H - STATUS_H + 3, status, C_WHITE, C_BLACK);
-    text_at(SCREEN_W - 88, SCREEN_H - STATUS_H + 3, "Enter: open",
-            C_WHITE, C_BLACK);
+    if (status_timed) {
+        text_at(6, SCREEN_H - STATUS_H + 3, status, C_WHITE, C_BLACK);
+    } else {
+        draw_key_legend(SCREEN_H - STATUS_H + 3);
+    }
 
     gfx_SwapDraw();
 }
 
 /* ---------- Input ---------- */
+
+/* Moves up one level: a folder goes to its parent, a partition root goes to the
+ * partition list (or the calculator if there's only one), a partition list goes
+ * to the calculator. Does nothing at the calculator root. */
+static void go_up_level(void) {
+    if (location == LOC_PART) {
+        location = LOC_CALC;
+        calc_refresh();
+        reset_view_position();
+    } else if (location == LOC_DRIVE) {
+        if (strcmp(drive_path, "/") == 0) {
+            if (part_count > 1) {
+                location = LOC_PART;
+                part_refresh();
+            } else {
+                location = LOC_CALC;
+                calc_refresh();
+            }
+        } else {
+            drive_go_up();
+            drive_refresh();
+        }
+        reset_view_position();
+    }
+}
+
+/* Alpha + Up/Down: moves one screen of rows (no wrap). */
+static void page_selection(int step) {
+    if (item_count == 0) return;
+    selected += step * VISIBLE_ROWS;
+    if (selected < 0) selected = 0;
+    if (selected > item_count - 1) selected = item_count - 1;
+    clamp_selection();
+    needs_redraw = true;
+}
 
 /* Up at the top wraps to the bottom; Down at the bottom wraps to the top. */
 static void move_selection(int delta) {
@@ -848,27 +1058,7 @@ static void activate_selected(void) {
             break;
 
         case KIND_PARENT:
-            if (location == LOC_PART) {
-                location = LOC_CALC;
-                calc_refresh();
-                reset_view_position();
-            } else if (location == LOC_DRIVE) {
-                if (strcmp(drive_path, "/") == 0) {
-                    /* Root of a partition: back to the partition list if there
-                     * are several, otherwise back to the calculator. */
-                    if (part_count > 1) {
-                        location = LOC_PART;
-                        part_refresh();
-                    } else {
-                        location = LOC_CALC;
-                        calc_refresh();
-                    }
-                } else {
-                    drive_go_up();
-                    drive_refresh();
-                }
-                reset_view_position();
-            }
+            go_up_level();
             break;
 
         case KIND_DIR:
@@ -883,43 +1073,18 @@ static void activate_selected(void) {
             break;
 
         case KIND_VAR:
-            set_status("Variable viewer not built yet");
+            var_info_open(it->name, it->type);
             break;
     }
     needs_redraw = true;
 }
 
-/* Handles one key while search is typing. Letters are added, Del removes
- * the last one, and Enter or Alpha leaves typing mode and keeps the filter. */
-static void search_key(uint8_t key) {
+/* Adds one typed letter (from alpha or alpha lock) to the search. */
+static void type_letter(char c) {
     size_t n = strlen(search);
-    size_t i;
-    bool changed = false;
-
-    if (key == sk_Alpha || key == sk_Enter) {
-        search_typing = false;
-        needs_redraw = true;
-        return;
-    }
-    if (key == sk_Del) {
-        if (n > 0) {
-            search[n - 1] = 0;
-            changed = true;
-        }
-    } else {
-        for (i = 0; i < sizeof(letter_keys) / sizeof(letter_keys[0]); i++) {
-            if (key == letter_keys[i].key) {
-                if (n < SEARCH_MAX - 1) {
-                    search[n] = letter_keys[i].ch;
-                    search[n + 1] = 0;
-                    changed = true;
-                }
-                break;
-            }
-        }
-    }
-
-    if (changed) {
+    if (n < SEARCH_MAX - 1) {
+        search[n] = c;
+        search[n + 1] = 0;
         reset_view_position();
         refresh_current();
     }
@@ -936,15 +1101,28 @@ static void restore_palette(void) {
     gfx_SetPalette(mypalette, sizeof_mypalette, 0);  /* icon colors */
     gfx_SetPalette(&title,  sizeof(title),  C_BLUE);    /* title bar */
     gfx_SetPalette(&select, sizeof(select), C_SELECT);  /* selected row */
+    gfx_SetPalette(ti_pal, sizeof(ti_pal), TI_PAL_BASE); /* TI-BASIC icon colors */
 }
 
 /* ---------- Main ---------- */
 
 int main(void) {
     uint8_t key;
+    bool quit = false;
+    uint8_t last_key = 0;
+    bool pressed;
+    bool typing_now = false;   /* search was being typed when this key went down */
+    bool page_key = false;     /* alpha + Up/Down, on the frame the key went down */
+    char letter;
     bool last_ready = false;
 
     gfx_Begin();
+    status_at = (uint32_t)clock();
+    status_timed = true;
+    {
+        int i;
+        for (i = 0; i < 16; i++) ti_pal[i] = gfx_palette[basic_palette[i]];  /* before FileR overwrites it */
+    }
     restore_palette();
     gfx_SetDrawBuffer();
 
@@ -952,7 +1130,7 @@ int main(void) {
     usb_Init(usb_handler, NULL, NULL, USB_DEFAULT_INIT_FLAGS);
     calc_refresh();
 
-    while (1) {
+    while (!quit) {
         /* Dispatch pending USB events so connect/enable callbacks run. */
         usb_HandleEvents();
 
@@ -981,7 +1159,20 @@ int main(void) {
         }
 
         key = os_GetCSC();
-        if (key == sk_Clear) break;
+        if (key == sk_Del) break;   /* Del exits from anywhere */
+        /* A key counts once per press. Holding it down doesn't run the modifiers again. */
+        pressed = key != 0 && key != last_key;
+        last_key = key;
+        letter = 0;
+        page_key = false;
+        if (pressed) {
+            typing_now = search_mode;                       /* only y= feeds the search */
+            letter = search_mode ? keys_char(key) : 0;
+            page_key = keys_alpha_active() && (key == sk_Up || key == sk_Down);   /* before the modifiers change */
+            /* With the info panel open, 2nd is its archive toggle, not the shift modifier. */
+            if (!(key == sk_2nd && var_info_is_open())) keys_process(key);
+            needs_redraw = true;         /* indicators may have changed */
+        }
 
         if (image_is_open()) {
             if (image_key(key)) {
@@ -990,25 +1181,16 @@ int main(void) {
             }
         } else if (viewer_is_open()) {
             if (viewer_key(key)) needs_redraw = true;
-        } else if (search_typing) {
-            search_key(key);
+        } else if (var_info_is_open()) {
+            if (var_info_key(key)) calc_refresh();
+            needs_redraw = true;
+        } else if (letter) {
+            type_letter(letter);
         } else {
             switch (key) {
-                case sk_Up:    move_selection(-1); break;
-                case sk_Down:  move_selection(1);  break;
+                case sk_Up:    if (page_key) page_selection(-1); else move_selection(-1); break;
+                case sk_Down:  if (page_key) page_selection(1);  else move_selection(1);  break;
                 case sk_Enter: activate_selected(); break;
-                case sk_Alpha:
-                    search_typing = true;
-                    needs_redraw = true;
-                    break;
-                case sk_Del:
-                    if (search[0] != 0) {
-                        clear_search();
-                        refresh_current();
-                        reset_view_position();
-                        needs_redraw = true;
-                    }
-                    break;
                 case sk_Left:
                     if (location == LOC_CALC) {
                         type_filter = (type_filter + TYPE_COUNT - 1) % TYPE_COUNT;
@@ -1025,7 +1207,35 @@ int main(void) {
                         needs_redraw = true;
                     }
                     break;
+                case sk_Clear:
+                    if (typing_now) {
+                        clear_search();   /* while typing a search, Clear empties it */
+                        refresh_current();
+                        reset_view_position();
+                        needs_redraw = true;
+                    } else if (location == LOC_CALC) {
+                        quit = true;      /* at the calculator root, Clear exits */
+                    } else {
+                        clear_search();
+                        go_up_level();
+                        needs_redraw = true;
+                    }
+                    break;
+                case sk_Yequ:
+                    search_mode = !search_mode;
+                    set_status(search_mode ? "y=: search on, y= to stop" : "y=: search off");
+                    break;
+                case sk_Window:
+                    set_status("Window: unassigned");
+                    break;
+                case sk_Zoom:
+                    set_status("Zoom: unassigned");
+                    break;
+                case sk_Trace:
+                    set_status("Trace: unassigned");
+                    break;
                 case sk_Graph:
+                    set_status("Graph: store filter");
                     if (location == LOC_CALC) {
                         store_filter = (store_filter + 1) % STORE_COUNT;
                         calc_refresh();
@@ -1038,6 +1248,11 @@ int main(void) {
             }
         }
 
+        if (status_timed && (uint32_t)clock() - status_at >= (uint32_t)STATUS_SECONDS * CLOCKS_PER_SEC) {
+            status[0] = 0;
+            status_timed = false;
+            status_changed = true;
+        }
         if (status_changed) {
             status_changed = false;
             needs_redraw = true;

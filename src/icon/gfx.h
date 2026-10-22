@@ -7,6 +7,8 @@ extern "C" {
 
 #include "mypalette.h"
 #define icons_palette_offset 0
+#include "alpha.h"
+#include "alphalock.h"
 #include "app.h"
 #include "appvar.h"
 #include "archive.h"
@@ -23,6 +25,7 @@ extern "C" {
 #include "image.h"
 #include "lock.h"
 #include "prgm.h"
+#include "shift.h"
 #include "text.h"
 #include "usb.h"
 #include "usbdisconnect.h"

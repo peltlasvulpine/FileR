@@ -15,7 +15,7 @@ Currently in development.
 - [x] Nice(ish) UI
 - [x] Battery display
 - [x] Charging handling(ish)
-- [ ] Icon support
+- [x] Icon support (is still a little bit wonky & has wrong colours)
 - [x] USB support
 - [x] USB partition support
 - [x] USB partition names
@@ -47,13 +47,33 @@ These are the currently supported filetypes (to open)
 
 | Key | Action |
 |---|---|
-| Up | Move selection up |
-| Down | Move selection down |
+| Up | Move selection up (Move up 10 (Alpha)) |
+| Down | Move selection down (Move down 10 (Alpha))|
 | Left | Cycle left `Type` filter |
 | Right | Cycle right `Type` filter |
+| 2nd | Toggle Shift |
+| Alpha | Toggle Alpha / Alpha Lock (Shift) |
+| Y = | Search |
 | Graph | Cycle `Store` filter |
-| Enter | Open directory |
-| Clear | Exit FileR |
+| Enter | Enter actions |
+| Clear | Clear actions |
+| Del | Exit FileR |
+
+Clear actions are as follows
+
+| Context | Action |
+|---|---|
+| In search | Clear the search |
+| In USB directories | Go down a directory |
+| In calculator "root" | Exit FileR |
+
+Enter actions are as follows
+
+| Context | Action |
+|---|---|
+| On a calculator variable | Shows info about the variable / Closes variable info |
+| On a `.txt` or `.html` file | Opens with the text viewer / Closes text viewer |
+| On a `.bmp` file | Opens with image viewer / Closes image viewer |
 
 ### How to format a USB device for the calculator
 
@@ -67,8 +87,8 @@ Please note that this only works with drives of **32 GB or less**
 1. Go to your search bar & search up "*Create and*", Windows *should* auto-complete it to "*Create and format hard disk partitions*", when that is shown, open it.
 2. In the bottom half of the *Create and format hard disk partitions* window, locate the USB to format & right-click its respective box on the left.
   - Check the menu
-    1. If it says "Convert to GPT Disk", move to #3
-    2. If it says "Convert to MBR Disk", select it. This will change your USB from GPT to MBR. (This is the part that wipes the USB)
+    1. If it says "*Convert to GPT Disk*", move to #3
+    2. If it says "*Convert to MBR Disk*", select it. This will change your USB from GPT to MBR. (This is the part that wipes the USB)
       <sub>If this option is grayed out, delete all partitions on the USB, then try again.</sub>
 3. Right-click the unallocated space & select "*New Simple Volume*".
 4. Follow the wizard prompts until you reach the "*Format Partition*" window.
