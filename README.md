@@ -1,21 +1,28 @@
 # FileR
 
 File manager for the TI-84 Plus CE (or similar) with USB support!
+This is mainly to be used **with** a USB connected. For more information on how to set this up, [check below](#how-to-format-a-usb-device-for-the-calculator).
+
+> Please have common sense when using this program, don't do something that will freeze the program, or break it, trying to move a folder into itself.
+> If you do find glitches, please report them to me via [issues on GitHub](https://github.com/peltlasvulpine/FileR/issues)!
 
 ### Status
 
-Currently in development.
+Almost finished with development.
 
 ## Current capabilities & checklist
 
 - [x] Read files
+- [x] Move files
+- [x] Rename files
+- [x] Copy files
 - [ ] Write to files
 - [x] List files
 - [x] Filter through files
 - [x] Nice(ish) UI
 - [x] Battery display
 - [x] Charging handling(ish)
-- [x] Icon support (is still a little bit wonky & has wrong colours)
+- [x] Icon support (colors are a little messed up & sometimes doesnt find the icon)
 - [x] USB support
 - [x] USB partition support
 - [x] USB partition names
@@ -36,44 +43,103 @@ These are the currently supported filetypes (to open)
 - `.htm`
 - `.bmp` (uncompressed)
 
-### Filter meanings
-
-| Filter | Meaning |
-|---|---|
-| `Type` | Type of variable (Program, AppVar, etc.) |
-| `Store` | Where the file is stored (Archive / RAM) |
-
 ## Usage / Keybinds
+
+### General
 
 | Key | Action |
 |---|---|
 | Up | Move selection up (Move up 10 (Alpha)) |
 | Down | Move selection down (Move down 10 (Alpha))|
-| Left | Cycle left `Type` filter |
-| Right | Cycle right `Type` filter |
 | 2nd | Toggle Shift |
 | Alpha | Toggle Alpha / Alpha Lock (Shift) |
 | Y = | Search |
-| Graph | Cycle `Store` filter |
-| Enter | Enter actions |
+| Graph | Change filters |
 | Clear | Clear actions |
-| Del | Exit FileR |
+| Mode | Open customization menu / Exit FileR (Shift) |
+| Del | Deletes selection |
 
-Clear actions are as follows
+> Deleting `FILERCFG` resets colors
 
+#### On calculator root
+
+| Key | Action |
+|---|---|
+| Window | Open calculator variable info |
+| Enter | Open USB / Open USB partitions (If more than one) |
+
+> Pressing Window while selecting USB will give an option to unmount by pressing 2nd.
+> Unmounting isn't required to remove the USB, and when exiting the program, the USB device will not auto-unmount
+
+#### Inside `/usb`
+
+| Key | Action |
+|---|---|
+| Window | Open `Files` Submenu |
+| Zoom | Open `Actions` Submenu |
+| Trace | Mark / Select an entry |
+| Enter | Enter actions |
+
+#### Text Viewer
+
+| Key | Action |
+|---|---|
+| Up | Go one line up |
+| Down | Go one line down |
+| Left | Go one page up |
+| Right | Go one page down |
+| Graph | Jump to |
+| Zoom | Toggles between percentage and line jump |
+| Enter | Close the text viewer |
+| Clear | Close the text viewer |
+
+#### Actions
+
+##### Enter
 | Context | Action |
 |---|---|
-| In search | Clear the search |
-| In USB directories | Go down a directory |
-| In calculator "root" | Exit FileR |
+| On a text file | Open / Close the text viewer |
+| On an image file | Open / Close the image viewer |
 
-Enter actions are as follows
-
+##### Clear
 | Context | Action |
 |---|---|
-| On a calculator variable | Shows info about the variable / Closes variable info |
-| On a `.txt` or `.html` file | Opens with the text viewer / Closes text viewer |
-| On a `.bmp` file | Opens with image viewer / Closes image viewer |
+| In calculator root | Exit FileR |
+| In a directory | Go down one directory |
+| While moving selections | Aborts action |
+| While copying selections | Aborts action |
+| On a text file | Close the text viewer |
+| On an image file | Close the image viewer |
+
+> Aborting an action is really hit-and-miss, you might have to spam Clear sometimes.
+
+#### Submenus
+
+##### `Files`
+- New Folder
+- Delete
+
+##### `Actions`
+- Rename
+- Move here
+- Copy here
+
+#### Customization menu
+
+Each entry can be changed by either:
+  - Pressing left / right to change the value by -1 / +1
+  - Pressing the number pad to write the color directly
+
+Press Enter to save, press Mode / Clear to cancel
+
+#### Filter meanings
+
+| Filter | Meaning |
+|---|---|
+| `Type` | Type of variable (Program, AppVar, etc.) |
+| `Store` | Where the file is stored (Archive / RAM) |
+| `Show` | Type of entry to show (Folder / File) |
+| `Ext` | Extension type (`.txt`, `.html`, `.bmp`, etc.) |
 
 ### How to format a USB device for the calculator
 
@@ -81,6 +147,8 @@ Enter actions are as follows
 > **BACKUP DATA ON SAID USB DEVICE, AS THIS *CAN* & MOST LIKELY *WILL* REMOVE <u>ALL</u> DATA ON SAID USB DEVICE**
 
 Please note that this only works with drives of **32 GB or less**
+
+To connect a USB device, use a mini USB adapter with OTG support.
 
 #### Windows (11/10)
 

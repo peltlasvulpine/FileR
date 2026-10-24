@@ -21,5 +21,8 @@ bool viewer_is_open(void);
 bool viewer_key(uint8_t key);
 void viewer_draw(void);
 void viewer_close(void);
+/* A function the viewer calls after drawing its screen and before it shows it,
+ * so main.c can add the battery and modifier icons. */
+void viewer_set_overlay(void (*fn)(void));
 
 #endif /* TEXT_VIEWER_H */

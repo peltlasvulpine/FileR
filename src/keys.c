@@ -65,8 +65,16 @@ char keys_letter(uint8_t key) {
     return keys_char(key);
 }
 
+bool keys_2nd_active(void) {
+    return shift_on;
+}
+
 bool keys_alpha_active(void) {
     return alpha_on || alock_on;
+}
+
+bool keys_alock_active(void) {
+    return alock_on;
 }
 
 /* Icons sit just left of the battery (battery_x), the same size as the battery

@@ -191,9 +191,9 @@ bool image_is_open(void) {
     return showing;
 }
 
-/* Enter or Del goes back. Any other key is ignored. */
+/* Enter, Del or Clear goes back. Any other key is ignored. */
 bool image_key(uint8_t key) {
-    if (key == sk_Enter || key == sk_Del) {
+    if (key == sk_Enter || key == sk_Del || key == sk_Clear) {
         showing = false;
         return true;
     }

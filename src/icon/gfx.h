@@ -19,6 +19,7 @@ extern "C" {
 #include "battmedhi.h"
 #include "battmedlow.h"
 #include "dir.h"
+#include "dirdirs.h"
 #include "dirfilled.h"
 #include "file.h"
 #include "html.h"
