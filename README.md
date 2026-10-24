@@ -200,6 +200,8 @@ sorry i don't use macOS, i can't help you here, just check a tutorial online :C
 
 ## Screenshots
 
+These screenshots are outdated, but I'm too lazy to fix this.
+
 ![Example view of what you'd see when you open the program](screenshots/homescreen.jpeg)
 
 ![Example view of a FAT32 USB with multiple partitions](screenshots/usbpartitions.jpeg)

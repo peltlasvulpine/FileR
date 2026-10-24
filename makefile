@@ -14,13 +14,21 @@ CXXFLAGS = -Wall -Wextra -Oz
 
 include $(shell cedev-config --makefile)
 
-# Create the icons
-icons:
+# Refresh icons
+refresh-icons:
+	@$(MAKE) del-icons
+	@$(MAKE) icons
+
+# Icon deletion
+del-icons:
 	@echo "Removing old icons..."
-	cd src/icon && rm *.c && rm *.h && rm *.lst
+	cd src/icon && rm -f *.c *.h *.lst
 	@echo "Cleaned!"
+
+# Create icons from pngs
+icons:
 	@echo "Creating icons..."
 	cd src/icon && convimg -i convimg.yaml
 	@echo "Done!"
-	
-all: icons
+
+all: refresh-icons
