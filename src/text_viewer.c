@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <fatdrvce.h>
+#include "fmt.h"
 #include "text_viewer.h"
 
 /* Layout and palette. These match main.c so the screen looks the same. */
@@ -62,12 +63,19 @@ static bool view_goto = false;       /* Graph was pressed: typing a line number 
 static uint32_t goto_val = 0;        /* line number typed so far */
 static int goto_digits = 0;          /* how many digits are typed */
 #define GOTO_DIGITS_MAX 6
-#define LINE_STEP 64              /* the index records every 64th line's start */
-#define LINE_IDX_MAX 1024
-static uint32_t line_idx[LINE_IDX_MAX];   /* byte offset where line k*LINE_STEP+1 starts */
+#define IDX_MAX     512          /* index entries kept */
+#define IDX_STRIDE0 1024         /* bytes between index entries at first; doubles when full */
+typedef struct { uint32_t off; uint32_t nl; } idx_t;   /* byte offset and newlines before it */
+static idx_t idx[IDX_MAX];
 static uint32_t idx_count = 0;
+static uint32_t idx_stride = IDX_STRIDE0;
 static uint32_t total_lines = 0;
 static bool jump_by_line = true;     /* Zoom in the jump prompt switches line / percent */
+static bool cache_valid = false;     /* cache_off / cache_nl hold a known position */
+static uint32_t cache_off = 0;       /* a byte offset in the file ... */
+static uint32_t cache_nl = 0;        /* ... and how many newlines come before it */
+static fat_file_t vf;                /* the open file, kept while the viewer is open */
+static bool vf_open = false;
 
 /* Same drawing helper as main.c: sets fg, bg and transparent color together. */
 static void text_at(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
@@ -159,27 +167,43 @@ static void view_clamp(void) {
     if (view_top < 0) view_top = 0;
 }
 
+/* Opens the file once for the whole time the viewer is open. Looking up a
+ * file by name searches the directory, so doing that on every seek is slow. */
+static bool vopen(void) {
+    if (vf_open) return true;
+    if (fat_OpenFile(vfat, view_path, 0, &vf) != FAT_SUCCESS) return false;
+    vf_open = true;
+    view_size = fat_GetFileSize(&vf);
+    return true;
+}
+
+/* Forgets the open file. The file is read-only, and its handle is a fixed
+ * 64-byte struct with nothing allocated, so nothing needs closing. Skipping
+ * fat_CloseFile also means no driver call is made if the drive was pulled. */
+static void vclose(void) {
+    vf_open = false;
+}
+
+/* Moves the open file to a block. Blocks are FILE_BLOCK bytes. */
+static bool vseek_block(uint32_t block) {
+    return fat_SetFileBlockOffset(&vf, block) == FAT_SUCCESS;
+}
+
 /* Reads the window of the file that starts at base (block aligned). */
 static bool load_window(uint32_t base) {
-    fat_file_t f;
     uint32_t got = 0;
 
-    if (fat_OpenFile(vfat, view_path, 0, &f) != FAT_SUCCESS) return false;
-    view_size = fat_GetFileSize(&f);
+    if (!vopen()) return false;
     if (base > view_size) base = view_size;
-    if (fat_SetFileBlockOffset(&f, base / FILE_BLOCK) != FAT_SUCCESS) {
-        fat_CloseFile(&f);
-        return false;
-    }
+    if (!vseek_block(base / FILE_BLOCK)) return false;
 
     while (got + FILE_BLOCK <= VIEW_MAX && base + got < view_size) {
         uint32_t in_block = view_size - base - got;
         if (in_block > FILE_BLOCK) in_block = FILE_BLOCK;
-        if (fat_ReadFile(&f, 1, view_block) != 1) break;
+        if (fat_ReadFile(&vf, 1, view_block) != 1) break;
         memcpy(view_buf + got, view_block, in_block);
         got += in_block;
     }
-    fat_CloseFile(&f);
 
     view_base = base;
     view_len = got;
@@ -219,116 +243,149 @@ static void view_maybe_reload(void) {
     }
 }
 
-/* Reads the file once to count its lines and record where every LINE_STEP-th
- * line starts. The index lets the viewer show the current line and jump to a
- * line without reading the whole file from the top each time. */
-static void build_index(void) {
-    fat_file_t f;
-    uint32_t pos = 0, cur = 1, n, i, last = 0;
-
-    idx_count = 1;
-    line_idx[0] = 0;
-    total_lines = 1;
-    if (view_size == 0 || fat_OpenFile(vfat, view_path, 0, &f) != FAT_SUCCESS) return;
-    while (pos < view_size) {
-        n = view_size - pos;
-        if (n > FILE_BLOCK) n = FILE_BLOCK;
-        if (fat_ReadFile(&f, 1, view_block) != 1) break;
-        for (i = 0; i < n; i++) {
-            if (view_block[i] == '\n') {
-                cur++;
-                if ((cur - 1) % LINE_STEP == 0 && idx_count < LINE_IDX_MAX) {
-                    line_idx[idx_count++] = pos + i + 1;
-                }
-            }
-        }
-        last = view_block[n - 1];
-        pos += n;
-    }
-    fat_CloseFile(&f);
-    total_lines = cur;
-    if (last == '\n' && cur > 1) total_lines = cur - 1;   /* a trailing newline doesn't start a new line */
-}
-
-/* The line number (1-based) that holds byte offset off. */
-static uint32_t line_at(uint32_t off) {
-    uint32_t lo = 0, hi = idx_count - 1, mid, k, start, pos, i, n, lines = 0;
-    fat_file_t f;
-
-    while (lo < hi) {                       /* largest k with line_idx[k] <= off */
-        mid = (lo + hi + 1) / 2;
-        if (line_idx[mid] <= off) lo = mid;
-        else hi = mid - 1;
-    }
-    k = lo;
-    start = line_idx[k];
-    if (off > start && fat_OpenFile(vfat, view_path, 0, &f) == FAT_SUCCESS) {
-        if (fat_SetFileBlockOffset(&f, start / FILE_BLOCK) == FAT_SUCCESS) {
-            pos = (start / FILE_BLOCK) * FILE_BLOCK;
-            while (pos < off) {
-                if (fat_ReadFile(&f, 1, view_block) != 1) break;
-                for (i = 0; i < FILE_BLOCK; i++) {
-                    uint32_t abs = pos + i;
-                    if (abs >= off) break;
-                    if (abs >= start && view_block[i] == '\n') lines++;
-                }
-                pos += FILE_BLOCK;
-            }
-        }
-        fat_CloseFile(&f);
-    }
-    (void)n;
-    return k * LINE_STEP + 1 + lines;
-}
-
-/* Finds where line number line starts. If the file is shorter, gives the start
- * of its last line. Reads from the nearest indexed line, not the top. */
-static bool find_line(uint32_t line, uint32_t *offset) {
-    fat_file_t f;
-    uint32_t k, start, seen, pos, i, n, abs, last_start;
-    bool found = false;
-
-    if (line <= 1) {
-        *offset = 0;
-        return true;
-    }
-    k = (line - 1) / LINE_STEP;
-    if (k >= idx_count) k = idx_count - 1;
-    start = line_idx[k];
-    seen = k * LINE_STEP + 1;
-    last_start = start;
-    if (fat_OpenFile(vfat, view_path, 0, &f) != FAT_SUCCESS) return false;
-    if (fat_SetFileBlockOffset(&f, start / FILE_BLOCK) != FAT_SUCCESS) {
-        fat_CloseFile(&f);
-        return false;
-    }
-    pos = (start / FILE_BLOCK) * FILE_BLOCK;
-    while (!found && pos < view_size) {
-        n = view_size - pos;
-        if (n > FILE_BLOCK) n = FILE_BLOCK;
-        if (fat_ReadFile(&f, 1, view_block) != 1) break;
-        for (i = 0; i < n && !found; i++) {
-            abs = pos + i;
-            if (abs < start) continue;
-            if (view_block[i] == '\n') {
-                seen++;
-                last_start = abs + 1;
-                if (seen == line) found = true;
-            }
-        }
-        pos += FILE_BLOCK;
-    }
-    fat_CloseFile(&f);
-    *offset = last_start;
-    return true;
-}
-
 /* Shows a note on the bottom bar right away, before work that takes a moment. */
 static void show_busy(const char *msg) {
     gfx_SetColor(VT_BOT);
     gfx_FillRectangle(0, SCREEN_H - STATUS_H, SCREEN_W, STATUS_H);
     text_at(6, SCREEN_H - STATUS_H + 3, msg, VT_BOTTXT, VT_BOT);
     gfx_SwapDraw();
+}
+
+/* Shows a percentage on the bottom bar while the lines are counted. */
+static void show_count_progress(uint32_t done, uint32_t total) {
+    char msg[32];
+    uint32_t pct = total ? (uint32_t)(((uint64_t)done * 100) / total) : 100;
+
+    fmt(msg, "Counting lines... %lu%%", (unsigned long)pct);
+    show_busy(msg);
+}
+
+/* Reads the file once to count its lines and records an index entry about
+ * every idx_stride bytes: the byte offset and how many newlines come before it.
+ * When the index is full, every other entry is dropped and the stride doubles,
+ * so the index covers files of any size. */
+static void build_index(void) {
+    uint32_t pos = 0, nl = 0, n, i, j, last = 0, blocks = 0, next_rec = 0;
+
+    idx_count = 0;
+    idx_stride = IDX_STRIDE0;
+    cache_valid = false;
+    total_lines = 1;
+    idx[idx_count].off = 0;
+    idx[idx_count].nl = 0;
+    idx_count++;
+    if (view_size == 0 || !vopen() || !vseek_block(0)) return;
+    next_rec = idx_stride;
+    while (pos < view_size) {
+        n = view_size - pos;
+        if (n > FILE_BLOCK) n = FILE_BLOCK;
+        if (fat_ReadFile(&vf, 1, view_block) != 1) break;
+        if (pos >= next_rec) {
+            if (idx_count == IDX_MAX) {           /* full: keep every other entry */
+                for (j = 0; j < IDX_MAX / 2; j++) idx[j] = idx[2 * j];
+                idx_count = IDX_MAX / 2;
+                idx_stride *= 2;
+            }
+            idx[idx_count].off = pos;
+            idx[idx_count].nl = nl;
+            idx_count++;
+            next_rec = pos + idx_stride;
+        }
+        for (i = 0; i < n; i++) {
+            if (view_block[i] == '\n') nl++;
+        }
+        last = view_block[n - 1];
+        pos += n;
+        if ((++blocks & 63) == 0) show_count_progress(pos, view_size);
+    }
+    total_lines = nl + 1;
+    if (last == '\n' && nl > 0) total_lines = nl;   /* a trailing newline doesn't start a new line */
+}
+
+/* Index entry with the largest key that is at most key (or below it when
+ * strict). The key is a byte offset, or a newline count when by_nl is set. */
+static uint32_t idx_find(uint32_t key, bool by_nl, bool strict) {
+    uint32_t lo = 0, hi = idx_count - 1, mid, v;
+
+    while (lo < hi) {
+        mid = (lo + hi + 1) / 2;
+        v = by_nl ? idx[mid].nl : idx[mid].off;
+        if (strict ? v < key : v <= key) lo = mid;
+        else hi = mid - 1;
+    }
+    return lo;
+}
+
+/* The line number (1-based) that holds byte offset off. Counts newlines from
+ * the nearest known position, which is at most idx_stride bytes away. */
+static uint32_t line_at(uint32_t off) {
+    uint32_t k = idx_find(off, false, false);
+    uint32_t start = idx[k].off, nl = idx[k].nl, pos, i, abs;
+    bool ok = true;
+
+    if (cache_valid && cache_off <= off && cache_off >= start) {
+        start = cache_off;
+        nl = cache_nl;
+    }
+    if (off > start) {
+        ok = false;
+        if (vopen() && vseek_block(start / FILE_BLOCK)) {
+            ok = true;
+            pos = (start / FILE_BLOCK) * FILE_BLOCK;
+            while (pos < off) {
+                if (fat_ReadFile(&vf, 1, view_block) != 1) { ok = false; break; }
+                for (i = 0; i < FILE_BLOCK; i++) {
+                    abs = pos + i;
+                    if (abs >= off) break;
+                    if (abs >= start && view_block[i] == '\n') nl++;
+                }
+                pos += FILE_BLOCK;
+            }
+        }
+    }
+    if (ok) {
+        cache_off = off;
+        cache_nl = nl;
+        cache_valid = true;
+    }
+    return nl + 1;
+}
+
+/* Finds where line number line starts. If the file is shorter, gives the start
+ * of its last line. Scans from the last index entry before the line, so it
+ * reads about idx_stride bytes at most. */
+static bool find_line(uint32_t line, uint32_t *offset) {
+    uint32_t want, k, nl, start, pos, i, n, abs, last_start;
+    bool found = false;
+
+    if (line <= 1) {
+        *offset = 0;
+        return true;
+    }
+    want = line - 1;                        /* newlines to pass before the target line */
+    k = idx_find(want, true, true);         /* last entry with fewer newlines than want */
+    nl = idx[k].nl;
+    start = idx[k].off;
+    last_start = start;
+    if (!vopen() || !vseek_block(start / FILE_BLOCK)) return false;
+    pos = (start / FILE_BLOCK) * FILE_BLOCK;
+    while (!found && pos < view_size) {
+        n = view_size - pos;
+        if (n > FILE_BLOCK) n = FILE_BLOCK;
+        if (fat_ReadFile(&vf, 1, view_block) != 1) break;
+        for (i = 0; i < n && !found; i++) {
+            abs = pos + i;
+            if (abs < start) continue;
+            if (view_block[i] == '\n') {
+                nl++;
+                last_start = abs + 1;
+                if (nl == want) found = true;
+            }
+        }
+        pos += FILE_BLOCK;
+    }
+    *offset = last_start;
+    return true;
 }
 
 /* Jumps to a line number. */
@@ -400,7 +457,11 @@ bool viewer_open(fat_t *fat, const char *fpath, const char *name) {
     strncpy(view_path, fpath, sizeof(view_path) - 1);
     view_path[sizeof(view_path) - 1] = 0;
 
-    if (!view_seek(0)) return false;
+    vclose();
+    if (!vopen() || !view_seek(0)) {
+        vclose();
+        return false;
+    }
     show_busy("Counting lines...");
     build_index();
 
@@ -457,7 +518,7 @@ void viewer_draw(void) {
     /* Title bar carries the file name as a header. */
     gfx_SetColor(VT_TOP);
     gfx_FillRectangle(0, 0, SCREEN_W, TITLE_H);
-    sprintf(info, "View: %s", view_name);
+    fmt(info, "View: %s", view_name);
     text_at(6, 6, info, VT_TOPTXT, VT_TOP);
 
     for (i = 0; i < VIEW_VISIBLE; i++) {
@@ -485,19 +546,19 @@ void viewer_draw(void) {
     gfx_FillRectangle(0, SCREEN_H - STATUS_H, SCREEN_W, STATUS_H);
     if (view_goto) {
         if (jump_by_line) {
-            if (goto_digits) sprintf(info, "Jump to line: %lu_  Zoom: %%", (unsigned long)goto_val);
-            else sprintf(info, "Jump to line: _  Zoom: %%");
+            if (goto_digits) fmt(info, "Jump to line: %lu_  Zoom: %%", (unsigned long)goto_val);
+            else fmt(info, "Jump to line: _  Zoom: %%");
         } else {
-            if (goto_digits) sprintf(info, "Jump to %%: %lu_  Zoom: line", (unsigned long)goto_val);
-            else sprintf(info, "Jump to %%: _  Zoom: line");
+            if (goto_digits) fmt(info, "Jump to %%: %lu_  Zoom: line", (unsigned long)goto_val);
+            else fmt(info, "Jump to %%: _  Zoom: line");
         }
     } else {
         if (view_size > 0) pct = (top_offset() * 100) / view_size;
         if (total_lines > 0) {
-            sprintf(info, "Line %lu of %lu  %d%%", (unsigned long)line_at(top_offset()),
+            fmt(info, "Line %lu of %lu  %d%%", (unsigned long)line_at(top_offset()),
                     (unsigned long)total_lines, (int)pct);
         } else {
-            sprintf(info, "%d%%", (int)pct);
+            fmt(info, "%d%%", (int)pct);
         }
     }
     text_at(6, SCREEN_H - STATUS_H + 3, info, VT_BOTTXT, VT_BOT);
@@ -514,4 +575,6 @@ void viewer_draw(void) {
 void viewer_close(void) {
     viewing = false;
     view_goto = false;
+    cache_valid = false;
+    vclose();
 }

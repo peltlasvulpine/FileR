@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include "fmt.h"
 #include "var_info.h"
 
 /* Palette indices, the same as main.c. */
@@ -48,7 +49,7 @@ static void type_label(uint8_t t, char *buf) {
         case OS_TYPE_CPLX:      strcpy(buf, "Complex");      break;
         case OS_TYPE_REAL_LIST: strcpy(buf, "Real list");    break;
         case OS_TYPE_CPLX_LIST: strcpy(buf, "Complex list"); break;
-        default:                sprintf(buf, "Type 0x%02X", (unsigned)t); break;
+        default:                fmt(buf, "Type 0x%02X", (unsigned)t); break;
     }
 }
 
@@ -120,9 +121,9 @@ static void draw_usb(void) {
     gfx_FillRectangle(PANEL_X + 1, PANEL_Y + 1, PANEL_W - 2, 16);
     vi_text(PANEL_X + 6, PANEL_Y + 5, "USB drive", VI_TOPTXT, VI_TOP);
 
-    sprintf(line, "Mounted: %s", usb_mounted ? "Yes" : "No");
+    fmt(line, "Mounted: %s", usb_mounted ? "Yes" : "No");
     vi_text(PANEL_X + 6, PANEL_Y + 24, line, VI_TXT, VI_BG);
-    sprintf(line, "Partitions: %d", usb_parts);
+    fmt(line, "Partitions: %d", usb_parts);
     vi_text(PANEL_X + 6, PANEL_Y + 40, line, VI_TXT, VI_BG);
 
     vi_text(PANEL_X + 6, PANEL_Y + 104, "Replug to remount", VI_TXT, VI_BG);
@@ -150,15 +151,15 @@ void var_info_draw(void) {
     gfx_FillRectangle(PANEL_X + 1, PANEL_Y + 1, PANEL_W - 2, 16);
     vi_text(PANEL_X + 6, PANEL_Y + 5, "Variable", VI_TOPTXT, VI_TOP);
 
-    sprintf(line, "Name: %s", vname);
+    fmt(line, "Name: %s", vname);
     vi_text(PANEL_X + 6, PANEL_Y + 24, line, VI_TXT, VI_BG);
-    sprintf(line, "Type: %s", type);
+    fmt(line, "Type: %s", type);
     vi_text(PANEL_X + 6, PANEL_Y + 40, line, VI_TXT, VI_BG);
-    sprintf(line, "Archived: %s", varchived ? "Yes" : "No");
+    fmt(line, "Archived: %s", varchived ? "Yes" : "No");
     vi_text(PANEL_X + 6, PANEL_Y + 56, line, VI_TXT, VI_BG);
-    sprintf(line, "Locked: %s", vtype == OS_TYPE_PROT_PRGM ? "Yes" : "No");
+    fmt(line, "Locked: %s", vtype == OS_TYPE_PROT_PRGM ? "Yes" : "No");
     vi_text(PANEL_X + 6, PANEL_Y + 72, line, VI_TXT, VI_BG);
-    sprintf(line, "Size: %u bytes", (unsigned)vsize);
+    fmt(line, "Size: %u bytes", (unsigned)vsize);
     vi_text(PANEL_X + 6, PANEL_Y + 88, line, VI_TXT, VI_BG);
 
     vi_text(PANEL_X + 6, PANEL_Y + PANEL_H - 30, "2nd: toggle archive", VI_TXT, VI_BG);

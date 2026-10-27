@@ -10,6 +10,7 @@
 #include <fileioc.h>
 #include <keypadc.h>      /* kb_IsDown: tests 2nd + Mode directly */
 #include <sys/power.h>   /* boot_GetBatteryStatus, boot_BatteryCharging */
+#include "fmt.h"
 #include "icon/gfx.h"   /* convimg output: all icon sprites + palette */
 #include "text_viewer.h"    /* text viewer for .txt files */
 #include "image_viewer.h"   /* image viewer for .bmp files */
@@ -268,7 +269,7 @@ static bool open_partition(int i) {
     fat_close_volume();
     ferr = fat_Open(&fat, read_cb, write_cb, NULL, part_lba[i]);
     if (ferr != FAT_SUCCESS) {
-        sprintf(buf, "Drive: FAT open failed (%d)", (int)ferr);
+        fmt(buf, "Drive: FAT open failed (%d)", (int)ferr);
         usb_fail(buf);
         return false;
     }
@@ -309,13 +310,13 @@ static void mount_device(usb_device_t dev) {
     for (i = 0; i < n; i++) part_lba[i] = parts[i].first_lba;
     msd_ready = true;
 
-    sprintf(usb_label, "%d part%s", (int)n, n == 1 ? "" : "s");
+    fmt(usb_label, "%d part%s", (int)n, n == 1 ? "" : "s");
     read_part_labels();
 
     if (n == 1) {
         open_partition(0);
     } else {
-        sprintf(buf, "Found %d partitions, press Enter", (int)n);
+        fmt(buf, "Found %d partitions, press Enter", (int)n);
         set_status(buf);
     }
 }
@@ -617,9 +618,9 @@ static void part_refresh(void) {
         it = &items[item_count];
         /* Shown like a folder: trailing "/", named by the volume label if there is one. */
         if (part_label[i][0]) {
-            sprintf(it->name, "%s/", part_label[i]);
+            fmt(it->name, "%s/", part_label[i]);
         } else {
-            sprintf(it->name, "Part %d/", i + 1);
+            fmt(it->name, "Part %d/", i + 1);
         }
         it->kind = KIND_PART;
         it->type = (uint8_t)i;
@@ -770,9 +771,9 @@ static bool selected_drive_file_size(uint32_t *size) {
     it = &items[selected];
     if (it->kind != KIND_FILE) return false;
     if (strcmp(drive_path, "/") == 0) {
-        sprintf(fpath, "/%s", it->name);
+        fmt(fpath, "/%s", it->name);
     } else {
-        sprintf(fpath, "%s/%s", drive_path, it->name);
+        fmt(fpath, "%s/%s", drive_path, it->name);
     }
     if (fat_OpenFile(&fat, fpath, 0, &f) != FAT_SUCCESS) return false;
     *size = fat_GetFileSize(&f);
@@ -802,13 +803,13 @@ static bool selected_size(uint32_t *size) {
  * one decimal place (for example "1.5 KB"). Integer math only. */
 static void format_size(uint32_t n, char *out) {
     if (n < 1024UL) {
-        sprintf(out, "%lu bytes", (unsigned long)n);
+        fmt(out, "%lu bytes", (unsigned long)n);
     } else if (n < 1024UL * 1024UL) {
-        sprintf(out, "%lu.%lu KB",
+        fmt(out, "%lu.%lu KB",
                 (unsigned long)(n / 1024UL),
                 (unsigned long)(((n % 1024UL) * 10UL) / 1024UL));
     } else {
-        sprintf(out, "%lu.%lu MB",
+        fmt(out, "%lu.%lu MB",
                 (unsigned long)(n / (1024UL * 1024UL)),
                 (unsigned long)(((n % (1024UL * 1024UL)) * 10UL) / (1024UL * 1024UL)));
     }
@@ -842,7 +843,8 @@ static void shorten_path(char *out, size_t outsz, const char *full) {
         while (*p && *p != '/') p++;
     }
     if (n == 0) {
-        snprintf(out, outsz, "/");
+        strncpy(out, "/", outsz - 1);
+        out[outsz - 1] = 0;
     } else if (n <= 4) {
         int i;
         out[0] = 0;
@@ -851,7 +853,15 @@ static void shorten_path(char *out, size_t outsz, const char *full) {
             strncat(out, part[i], outsz - strlen(out) - 1);
         }
     } else {
-        snprintf(out, outsz, "/%s/%s/.../%s/%s", part[0], part[1], part[n - 2], part[n - 1]);
+        out[0] = 0;
+        strncat(out, "/", outsz - strlen(out) - 1);
+        strncat(out, part[0], outsz - strlen(out) - 1);
+        strncat(out, "/", outsz - strlen(out) - 1);
+        strncat(out, part[1], outsz - strlen(out) - 1);
+        strncat(out, "/.../", outsz - strlen(out) - 1);
+        strncat(out, part[n - 2], outsz - strlen(out) - 1);
+        strncat(out, "/", outsz - strlen(out) - 1);
+        strncat(out, part[n - 1], outsz - strlen(out) - 1);
     }
 }
 
@@ -969,7 +979,7 @@ static void draw_filter(void) {
         int sel = i == filter_sel;
         char val[24];
 
-        sprintf(val, "%s  v", rows[i].opts[*rows[i].val]);
+        fmt(val, "%s  v", rows[i].opts[*rows[i].val]);
         if (sel) {
             gfx_SetColor(T_SEL);
             gfx_FillRectangle(x + 3, ry, w - 6, 16);
@@ -1238,9 +1248,9 @@ static bool row_is_marked(const item_t *it) {
     n[sizeof(n) - 1] = 0;
     strip_trailing_slash(n);
     if (strcmp(drive_path, "/") == 0) {
-        sprintf(p, "/%s", n);
+        fmt(p, "/%s", n);
     } else {
-        sprintf(p, "%s/%s", drive_path, n);
+        fmt(p, "%s/%s", drive_path, n);
     }
     return strcmp(p, mark_path) == 0;
 }
@@ -1348,21 +1358,21 @@ static void draw(void) {
 
     /* Path line and filters: black text on white */
     if (rename_mode) {
-        sprintf(line, "Rename: %s_   Enter save, Clear cancel", rename_buf);
+        fmt(line, "Rename: %s_   Enter save, Clear cancel", rename_buf);
     } else if (search_mode || search[0] != 0) {
-        sprintf(line, "Find: %s%s   (%d shown)", search,
+        fmt(line, "Find: %s%s   (%d shown)", search,
                 search_mode ? "_" : "", item_count - 1);
     } else if (location == LOC_CALC) {
-        sprintf(line, "Path: /%s",
+        fmt(line, "Path: /%s",
                 (store_filter || type_filter) ? "   filtered" : "");
     } else if (location == LOC_PART) {
-        sprintf(line, "Pick a partition   (%d found)", part_count);
+        fmt(line, "Pick a partition   (%d found)", part_count);
     } else {
         char shown[64];
-        sprintf(path, "/usb%s",
+        fmt(path, "/usb%s",
                 strcmp(drive_path, "/") == 0 ? "/" : drive_path);
         shorten_path(shown, sizeof(shown), path);
-        sprintf(line, "Path: %s   (%d items)%s", shown, item_count - 1,
+        fmt(line, "Path: %s   (%d items)%s", shown, item_count - 1,
                 (usb_kind || usb_ext) ? "   filtered" : "");
     }
     text_clip(6, FILTER_Y + 2, line, T_TXT, T_BG, SCREEN_W - 12);
@@ -1412,9 +1422,9 @@ static void draw(void) {
  * The parameter is not called `dir`, because `dir` is a sprite macro. */
 static void make_path(char *out, const char *folder, const char *name) {
     if (strcmp(folder, "/") == 0) {
-        sprintf(out, "/%s", name);
+        fmt(out, "/%s", name);
     } else {
-        sprintf(out, "%s/%s", folder, name);
+        fmt(out, "%s/%s", folder, name);
     }
 }
 
@@ -1446,14 +1456,14 @@ static void new_folder(void) {
     write_ok = true;
     for (n = 1; n <= 99 && err != FAT_SUCCESS; n++) {
         if (n == 1) strcpy(name, "NEWDIR");
-        else sprintf(name, "NEWDIR%d", n);
+        else fmt(name, "NEWDIR%d", n);
         err = fat_Create(&fat, drive_path, name, FAT_DIR);
     }
     write_ok = false;
     finish_writes();
 
     if (err == FAT_SUCCESS) {
-        sprintf(msg, "Made folder %s", name);
+        fmt(msg, "Made folder %s", name);
         set_status(msg);
         drive_refresh();
     } else {
@@ -1865,7 +1875,7 @@ static void perform_delete(const char *path, bool is_dir) {
     } else if (is_dir) {
         set_status("Delete failed, may be partly done");
     } else {
-        sprintf(msg, "Delete failed (FAT error %d)", (int)code);
+        fmt(msg, "Delete failed (FAT error %d)", (int)code);
         set_status(msg);
     }
     drive_refresh();
@@ -1899,7 +1909,7 @@ static void zoom_delete(void) {
     strcpy(pending_path, path);
     pending_is_dir = is_dir;
     pending_delete = true;
-    sprintf(msg, "Delete %s?", name);
+    fmt(msg, "Delete %s?", name);
     set_status(msg);
     status_timed = false;      /* stays until Y= or Graph answers it */
 }
@@ -1926,7 +1936,7 @@ static void calc_delete_prompt(void) {
     pending_var_type = it->type;
     pending_calc = true;
     pending_delete = true;
-    sprintf(msg, "Delete %s?", pending_var);
+    fmt(msg, "Delete %s?", pending_var);
     set_status(msg);
     status_timed = false;      /* stays until Y= or Graph answers it */
 }
@@ -1987,7 +1997,7 @@ static void unmount_usb(void) {
     unmount_device();
     {
         char msg[40];
-        sprintf(msg, "Unmounted. dropped %lu, written %lu",
+        fmt(msg, "Unmounted. dropped %lu, written %lu",
                 (unsigned long)writes_blocked, (unsigned long)writes_done);
         set_status(msg);
     }
@@ -2211,9 +2221,9 @@ static void open_file(const item_t *it) {
 
     if (viewer_can_open(it->name) || image_can_open(it->name)) {
         if (strcmp(drive_path, "/") == 0) {
-            sprintf(fpath, "/%s", it->name);
+            fmt(fpath, "/%s", it->name);
         } else {
-            sprintf(fpath, "%s/%s", drive_path, it->name);
+            fmt(fpath, "%s/%s", drive_path, it->name);
         }
     }
     if (viewer_can_open(it->name)) {
@@ -2498,7 +2508,7 @@ static void draw_settings(void) {
         text_at(x + 8, ry + 4, THEME_ROLE_NAME[i], sel ? T_SELTXT : T_TXT, sel ? T_SEL : T_BG);
         {
             char num[5];
-            sprintf(num, "%3d", theme_idx[i]);             /* the value, so typed digits show */
+            fmt(num, "%3d", theme_idx[i]);             /* the value, so typed digits show */
             text_at(x + w - 100, ry + 4, num, sel ? T_SELTXT : T_TXT, sel ? T_SEL : T_BG);
         }
         text_at(x + w - 62, ry + 4, "<", sel ? T_SELTXT : T_TXT, sel ? T_SEL : T_BG);
