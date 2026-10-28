@@ -5,7 +5,9 @@
 NAME = FILER
 ICON = icon.png
 DESCRIPTION = "File Manager FileR"
-COMPRESSED = yes
+COMPRESSED = YES
+ARCHIVED = YES
+COMPRESSED_MODE = zx0
 
 CFLAGS = -Wall -Wextra -Oz
 CXXFLAGS = -Wall -Wextra -Oz
