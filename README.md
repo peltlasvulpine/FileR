@@ -42,6 +42,7 @@ These are the currently supported filetypes (to open)
 - `.html`
 - `.htm`
 - `.bmp` (uncompressed)
+- `.gif`
 
 ## Usage / Keybinds
 
@@ -100,6 +101,9 @@ These are the currently supported filetypes (to open)
 |---|---|
 | On a text file | Open / Close the text viewer |
 | On an image file | Open / Close the image viewer |
+| On a GIF file | Open / Close the GIF viewer |
+
+> While viewing a GIF, you should hold down Enter if you want to exit.
 
 ##### Clear
 | Context | Action |
@@ -110,8 +114,10 @@ These are the currently supported filetypes (to open)
 | While copying selections | Aborts action |
 | On a text file | Close the text viewer |
 | On an image file | Close the image viewer |
+| On a GIF file | Close the GIF viewer |
 
 > Aborting an action is really hit-and-miss, you might have to spam Clear sometimes.
+> When viewing a GIF, you should hold down Clear if you want to exit
 
 #### Submenus
 
@@ -149,6 +155,11 @@ Press Enter to save, press Mode / Clear to cancel
 Please note that this only works with drives of **32 GB or less**
 
 To connect a USB device, use a mini USB adapter with OTG support.
+
+If a USB device takes a long time to connect, it is usually because:
+1. It's the first time the USB device has been connected.
+2. Contents on the USB device have been changed off-calculator.
+3. The calculator's RAM has been reset
 
 #### Windows (11/10)
 

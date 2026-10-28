@@ -14,6 +14,7 @@
 #include "icon/gfx.h"   /* convimg output: all icon sprites + palette */
 #include "text_viewer.h"    /* text viewer for .txt files */
 #include "image_viewer.h"   /* image viewer for .bmp files */
+#include "gif_viewer.h"     /* GIF viewer for .gif files */
 #include "var_info.h"     /* info panel for calculator variables */
 #include "keys.h"         /* 2nd and alpha modifiers */
 #include "lfn_fix.h"      /* removes long-name leftovers after a delete */
@@ -112,7 +113,7 @@ enum storage_filter { STORE_ALL, STORE_ARCHIVE, STORE_RAM, STORE_COUNT };
 enum type_filter { TYPE_ALL, TYPE_APPVAR, TYPE_PRGM, TYPE_VAR, TYPE_COUNT };
 
 /* Which icon goes on top of the base file icon. */
-enum overlay { OV_NONE, OV_APPVAR, OV_PRGM, OV_APP, OV_VAR, OV_TEXT, OV_HTML, OV_IMAGE };
+enum overlay { OV_NONE, OV_APPVAR, OV_PRGM, OV_APP, OV_VAR, OV_TEXT, OV_HTML, OV_IMAGE, OV_GIF };
 
 typedef struct {
     char name[16];
@@ -387,6 +388,7 @@ static const char *overlay_label(uint8_t ov) {
         case OV_TEXT:   return "Text";
         case OV_HTML:   return "HTML";
         case OV_IMAGE:  return "Image";
+        case OV_GIF:    return "GIF";
         default:        return NULL;
     }
 }
@@ -417,6 +419,7 @@ static uint8_t overlay_for_filename(const char *name) {
     if (ext_equals(dot, "txt")) return OV_TEXT;
     if (ext_equals(dot, "html") || ext_equals(dot, "htm")) return OV_HTML;
     if (ext_equals(dot, "png") || ext_equals(dot, "bmp")) return OV_IMAGE;
+    if (ext_equals(dot, "gif")) return OV_GIF;
     if (tolower((unsigned char)dot[1]) != '8') return OV_NONE;
     if (tolower((unsigned char)dot[2]) != 'x') return OV_NONE;
     switch (tolower((unsigned char)dot[3])) {
@@ -463,13 +466,13 @@ static bool storage_matches(bool archived) {
  * Calculator: Store and Type. USB drive: Show (all, folders or files) and Ext
  * (any, TXT or BMP). All are set in the Graph popup. */
 static uint8_t usb_kind = 0;    /* 0 all, 1 folders only, 2 files only */
-static uint8_t usb_ext = 0;     /* 0 any, 1 .TXT, 2 .HTML, 3 .HTM, 4 .BMP */
+static uint8_t usb_ext = 0;     /* 0 any, 1 .TXT, 2 .HTML, 3 .HTM, 4 .BMP, 5 .GIF */
 static const char *const store_opts[] = { "All", "Archive", "RAM" };
 static const char *const type_opts[]  = { "All", "AppVar", "Prgm", "Var" };
 static const char *const kind_opts[]  = { "All", "Folders", "Files" };
-static const char *const ext_opts[]   = { "Any", "TXT", "HTML", "HTM", "BMP" };
-#define EXT_COUNT 5
-static const char *const ext_want[]   = { NULL, "TXT", "HTML", "HTM", "BMP" };
+static const char *const ext_opts[]   = { "Any", "TXT", "HTML", "HTM", "BMP", "GIF" };
+#define EXT_COUNT 6
+static const char *const ext_want[]   = { NULL, "TXT", "HTML", "HTM", "BMP", "GIF" };
 
 typedef struct {
     const char *label;
@@ -1075,6 +1078,7 @@ static void draw_file_with_overlay(uint8_t overlay, int y) {
         case OV_TEXT:   draw_in_box(text, text_width, text_height, y);       break;
         case OV_HTML:   draw_in_box(html, html_width, html_height, y);       break;
         case OV_IMAGE:  draw_in_box(image, image_width, image_height, y);    break;
+        case OV_GIF:    draw_in_box(gif, gif_width, gif_height, y);          break;
         default:        break;
     }
 }
@@ -2219,7 +2223,7 @@ static void move_selection(int delta) {
 static void open_file(const item_t *it) {
     char fpath[PATH_MAX + 16];
 
-    if (viewer_can_open(it->name) || image_can_open(it->name)) {
+    if (viewer_can_open(it->name) || image_can_open(it->name) || gif_viewer_can_open(it->name)) {
         if (strcmp(drive_path, "/") == 0) {
             fmt(fpath, "/%s", it->name);
         } else {
@@ -2232,6 +2236,9 @@ static void open_file(const item_t *it) {
         if (!image_open(&fat, fpath, it->name)) {
             set_status("Could not open image (BMP, 8 or 24-bit, max 640 wide)");
         }
+    } else if (gif_viewer_can_open(it->name)) {
+        show_now("Loading GIF...");            /* decoding takes a second or two */
+        if (!gif_viewer_open(&fat, fpath)) set_status(gif_viewer_error());
     } else {
         set_status("Only .txt, .html, .bmp files open");
     }
@@ -2571,6 +2578,9 @@ int main(void) {
             viewer_close();
             needs_redraw = true;
         }
+        if (!msd_ready && gif_viewer_is_open()) {
+            gif_viewer_close();
+        }
         if (!msd_ready && image_is_open()) {
             image_close();
             restore_palette();
@@ -2582,6 +2592,11 @@ int main(void) {
             needs_redraw = true;
         }
 
+        /* While a GIF plays, step it in a tight loop until a key is pressed. The rest
+         * of this loop takes too long per pass to keep the frames on time. */
+        if (gif_viewer_is_open()) {
+            while (gif_viewer_is_open() && !kb_AnyKey()) gif_viewer_tick();
+        }
         key = os_GetCSC();
         /* 2nd is sticky after a tap, so either the modifier or the key being held counts. */
         second_held = keys_2nd_active() || kb_IsDown(kb_Key2nd);
@@ -2603,7 +2618,12 @@ int main(void) {
             needs_redraw = true;         /* indicators may have changed */
         }
 
-        if (image_is_open()) {
+        if (gif_viewer_is_open()) {
+            if (gif_viewer_key(key)) {
+                restore_palette();
+                needs_redraw = true;
+            }
+        } else if (image_is_open()) {
             if (image_key(key)) {
                 restore_palette();
                 needs_redraw = true;
@@ -2716,9 +2736,10 @@ int main(void) {
             status_changed = false;
             needs_redraw = true;
         }
+        gif_viewer_tick();                 /* animated GIFs step to their next frame */
         if (needs_redraw) {
             if (viewer_is_open()) viewer_draw();
-            else if (!image_is_open()) draw();   /* image is drawn once, on open */
+            else if (!image_is_open() && !gif_viewer_is_open()) draw();   /* pictures are drawn on open */
             needs_redraw = false;
         }
     }
@@ -2729,6 +2750,7 @@ int main(void) {
      * cleanly. */
     show_now("Exiting...");
     if (viewer_is_open()) viewer_close();
+    if (gif_viewer_is_open()) gif_viewer_close();
     if (image_is_open()) image_close();
     /* No drive unmount here: every operation already flushes the volume, and the
      * FSInfo recount is slow. */

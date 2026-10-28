@@ -22,6 +22,7 @@ extern "C" {
 #include "dirdirs.h"
 #include "dirfilled.h"
 #include "file.h"
+#include "gif.h"
 #include "html.h"
 #include "image.h"
 #include "lock.h"
