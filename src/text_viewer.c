@@ -243,12 +243,17 @@ static void view_maybe_reload(void) {
     }
 }
 
-/* Shows a note on the bottom bar right away, before work that takes a moment. */
+/* Shows a message on the bottom bar right away, before work that takes a
+ * moment. The whole screen is redrawn, because the drawing buffer still holds
+ * the last frame and only repainting the bar would leave that frame behind. */
+static char busy_buf[40];
+static bool busy = false;
+
 static void show_busy(const char *msg) {
-    gfx_SetColor(VT_BOT);
-    gfx_FillRectangle(0, SCREEN_H - STATUS_H, SCREEN_W, STATUS_H);
-    text_at(6, SCREEN_H - STATUS_H + 3, msg, VT_BOTTXT, VT_BOT);
-    gfx_SwapDraw();
+    strncpy(busy_buf, msg, sizeof(busy_buf) - 1);
+    busy_buf[sizeof(busy_buf) - 1] = 0;
+    busy = true;
+    viewer_draw();
 }
 
 /* Shows a percentage on the bottom bar while the lines are counted. */
@@ -394,6 +399,7 @@ static void jump_to_line(uint32_t line) {
 
     show_busy("Finding line...");
     if (find_line(line, &off)) view_seek(off);
+    busy = false;
 }
 
 /* Jumps to a percentage of the file. */
@@ -464,6 +470,7 @@ bool viewer_open(fat_t *fat, const char *fpath, const char *name) {
     }
     show_busy("Counting lines...");
     build_index();
+    busy = false;
 
     strncpy(view_name, name, sizeof(view_name) - 1);
     view_name[sizeof(view_name) - 1] = 0;
@@ -544,7 +551,9 @@ void viewer_draw(void) {
 
     gfx_SetColor(VT_BOT);
     gfx_FillRectangle(0, SCREEN_H - STATUS_H, SCREEN_W, STATUS_H);
-    if (view_goto) {
+    if (busy) {
+        strcpy(info, busy_buf);
+    } else if (view_goto) {
         if (jump_by_line) {
             if (goto_digits) fmt(info, "Jump to line: %lu_  Zoom: %%", (unsigned long)goto_val);
             else fmt(info, "Jump to line: _  Zoom: %%");
