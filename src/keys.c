@@ -77,6 +77,11 @@ bool keys_alock_active(void) {
     return alock_on;
 }
 
+void keys_alpha_off(void) {
+    alpha_on = false;
+    alock_on = false;
+}
+
 /* Icons sit just left of the battery (battery_x), the same size as the battery
  * icon. 2nd is next to the battery; alpha or alpha lock is the slot after it. */
 void keys_draw(int battery_x, int y) {

@@ -15,6 +15,7 @@
 #include "text_viewer.h"    /* text viewer for .txt files */
 #include "image_viewer.h"   /* image viewer for .bmp files */
 #include "gif_viewer.h"     /* GIF viewer for .gif files */
+#include "text_editor.h"    /* text editor for .txt files */
 #include "var_info.h"     /* info panel for calculator variables */
 #include "keys.h"         /* 2nd and alpha modifiers */
 #include "lfn_fix.h"      /* removes long-name leftovers after a delete */
@@ -142,6 +143,7 @@ static bool mark_is_dir = false;           /* the marked item is a folder */
 static bool copy_cancelled = false;        /* Clear stopped a folder copy */
 static bool rename_mode = false;           /* typing a new name for the selected file */
 static char rename_buf[13] = "";           /* the name typed so far */
+static bool new_file_mode = false;         /* the name being typed is for a new file */
 static char rename_src[PATH_MAX + 16];     /* full path of the file being renamed */
 static int cur_part = 0;                   /* partition index currently open */
 static bool pending_delete = false;        /* a delete is waiting for Y= (yes) or Graph (no) */
@@ -737,6 +739,7 @@ static void refresh_current(void) {
 
 static void drive_go_up(void) {
     char *slash = strrchr(drive_path, '/');
+    keys_alpha_off();                  /* alpha lock doesn't carry into another folder */
     if (!slash || slash == drive_path) {
         strcpy(drive_path, "/");
     } else {
@@ -747,6 +750,7 @@ static void drive_go_up(void) {
 static void drive_go_down(const char *name) {
     size_t len = strlen(drive_path);
     size_t add = strlen(name);
+    keys_alpha_off();                  /* alpha lock doesn't carry into another folder */
     if (!(len > 0 && drive_path[len - 1] == '/')) {
         if (len + 1 >= PATH_MAX) return;
         strcat(drive_path, "/");
@@ -895,14 +899,14 @@ static void text_clip(int x, int y, const char *s, uint8_t fg, uint8_t bg, int m
 
 /* Window opens the Files menu on the USB list. Zoom opens the Actions menu. */
 enum menu_kind { MENU_NONE, MENU_FILES, MENU_ACTIONS };
-static const char *files_items[2]   = { "New folder", "Delete" };
-static const char *actions_items[3] = { "Rename", "Move here", "Copy here" };
+static const char *files_items[3]   = { "New folder", "Delete", "New file" };
+static const char *actions_items[4] = { "Rename", "Move here", "Copy here", "Edit" };
 static bool menu_open = false;
 static enum menu_kind menu_kind = MENU_NONE;
 static int menu_sel = 0;
 
 static int menu_count(void) {
-    return menu_kind == MENU_FILES ? 2 : 3;
+    return menu_kind == MENU_FILES ? 3 : 4;
 }
 
 static const char *menu_item(int i) {
@@ -2037,6 +2041,48 @@ static char rename_char(uint8_t key) {
     }
 }
 
+/* The character a key types in the editor: 2nd symbols first, then letters and digits
+ * (as in rename), then the symbols on the plain and alpha keys. Call before keys_process. */
+static char editor_char(uint8_t key) {
+    char c;
+
+    if (keys_2nd_active()) {
+        switch (key) {
+            case sk_DecPnt: return ';';
+            case sk_LParen: return '{';
+            case sk_RParen: return '}';
+            case sk_Mul:    return '[';
+            case sk_Sub:    return ']';
+            case sk_Enter:  return '=';
+            default: break;
+        }
+    }
+    c = rename_char(key);
+    if (c) return c;
+    if (keys_alpha_active()) {
+        switch (key) {
+            case sk_0:     return ' ';
+            case sk_DecPnt: return ':';
+            case sk_Add:   return '"';
+            case sk_Left:  return '<';
+            case sk_Right: return '>';
+            default:       return 0;
+        }
+    }
+    switch (key) {
+        case sk_Add:    return '+';
+        case sk_Sub:    return '-';
+        case sk_Chs:    return '-';
+        case sk_Mul:    return '*';
+        case sk_Div:    return '/';
+        case sk_Power:  return '^';
+        case sk_LParen: return '(';
+        case sk_RParen: return ')';
+        case sk_Comma:  return ',';
+        default:        return 0;
+    }
+}
+
 /* True if s fits FAT 8.3: 1 to 8 characters, then optionally a dot and 1 to 3. */
 static bool rename_name_ok(const char *s) {
     const char *dot = strchr(s, '.');
@@ -2065,6 +2111,7 @@ static void start_rename(void) {
     strip_trailing_slash(name);
     make_path(rename_src, drive_path, name);
     rename_buf[0] = 0;
+    new_file_mode = false;
     rename_mode = true;
 }
 
@@ -2086,6 +2133,65 @@ static void finish_rename(void) {
     drive_refresh();
 }
 
+/* Files > New file: type a name, then an empty .txt opens in the editor. */
+static void start_new_file(void) {
+    if (location != LOC_DRIVE) {
+        set_status("New file: open a folder first");
+        return;
+    }
+    rename_buf[0] = 0;
+    new_file_mode = true;
+    rename_mode = true;
+}
+
+static void finish_new_file(void) {
+    char name[16];
+    char path[160];
+    bool created;
+
+    if (!rename_name_ok(rename_buf)) {
+        set_status("Name: 1-8 letters, optional .ext");
+        return;
+    }
+    strncpy(name, rename_buf, sizeof(name) - 1);
+    name[sizeof(name) - 1] = 0;
+    if (!strchr(name, '.')) strncat(name, ".txt", sizeof(name) - strlen(name) - 1);
+    if (!editor_can_open(name)) {
+        set_status("New file must end in .txt");
+        return;
+    }
+    rename_mode = false;
+    new_file_mode = false;
+    finish_writes();
+    write_ok = true;                     /* writes only reach the drive while this is set */
+    created = fat_Create(&fat, drive_path, name, 0) == FAT_SUCCESS;
+    write_ok = false;
+    finish_writes();                     /* flush the new entry to the drive */
+    drive_refresh();
+    if (!created) {
+        set_status("New file failed: name taken?");
+        return;
+    }
+    make_path(path, drive_path, name);
+    if (!editor_open(&fat, path, true)) set_status(editor_error());
+}
+
+/* Actions > Edit: opens the selected .txt in the editor. */
+static void start_edit(void) {
+    item_t *it;
+    char path[160];
+
+    if (location != LOC_DRIVE || item_count == 0) return;
+    it = &items[selected];
+    if (it->kind != KIND_FILE || !editor_can_open(it->name)) {
+        set_status("Edit: select a .txt file");
+        return;
+    }
+    make_path(path, drive_path, it->name);
+    if (!editor_open(&fat, path, false)) set_status(editor_error());
+    needs_redraw = true;
+}
+
 /* Keys while typing a new name. typed is the character this key gave, or 0. */
 static void rename_key(uint8_t key, char typed) {
     size_t n = strlen(rename_buf);
@@ -2098,9 +2204,11 @@ static void rename_key(uint8_t key, char typed) {
     } else if (key == sk_Left || key == sk_Del) {     /* Del deletes the last character */
         if (n > 0) rename_buf[n - 1] = 0;
     } else if (key == sk_Enter) {
-        finish_rename();
+        if (new_file_mode) finish_new_file();
+        else finish_rename();
     } else if (key == sk_Clear) {
         rename_mode = false;
+        new_file_mode = false;
         set_status("Rename cancelled");
     }
     needs_redraw = true;
@@ -2128,16 +2236,19 @@ static void menu_run(void) {
     close_menu();
     if (kind == MENU_FILES) {
         if (sel == 0) new_folder();
-        else zoom_delete();
+        else if (sel == 1) zoom_delete();
+        else start_new_file();
     } else {
         if (sel == 0) {
             start_rename();
         } else if (sel == 1) {
             if (mark_set) drop_marked();
             else set_status("Move: mark a file with Trace first");
-        } else {
+        } else if (sel == 2) {
             if (mark_set) copy_marked();
             else set_status("Copy: mark a file with Trace first");
+        } else {
+            start_edit();
         }
     }
 }
@@ -2531,6 +2642,14 @@ static void draw_settings(void) {
 
 /* ---------- Main ---------- */
 
+/* Editor auto-repeat: a held arrow or Del repeats after REPEAT_DELAY_MS, then every REPEAT_MS. */
+#define REPEAT_DELAY_MS 400
+#define REPEAT_MS       90
+
+static bool key_repeats(uint8_t key) {
+    return key == sk_Up || key == sk_Down || key == sk_Left || key == sk_Right || key == sk_Del;
+}
+
 int main(void) {
     uint8_t key;
     bool quit = false;
@@ -2538,6 +2657,11 @@ int main(void) {
     bool pressed;
     bool typing_now = false;   /* search was being typed when this key went down */
     bool page_key = false;     /* alpha + Up/Down, on the frame the key went down */
+    bool repeat_press = false; /* this press is an auto-repeat of a held editor key */
+    bool editor_menu_was = false;   /* the color menu was open when the editor last drew */
+    bool second_key = false;        /* 2nd was on for this press (read before keys_process) */
+    bool viewer_menu_was = false;   /* the color menu was open when the viewer last drew */
+    uint32_t repeat_at = 0;    /* clock() value when a held editor key next repeats */
     char letter;
     char typed = 0;            /* character typed by this key while renaming */
     bool last_ready = false;
@@ -2554,6 +2678,7 @@ int main(void) {
     }
     theme_load();
     viewer_set_overlay(draw_viewer_overlay);
+    editor_set_overlay(draw_viewer_overlay);
     restore_palette();
     gfx_SetDrawBuffer();
 
@@ -2576,6 +2701,10 @@ int main(void) {
         /* The viewer reads the drive, so leave it when the drive goes. */
         if (!msd_ready && viewer_is_open()) {
             viewer_close();
+            needs_redraw = true;
+        }
+        if (!msd_ready && editor_is_open()) {
+            editor_close();
             needs_redraw = true;
         }
         if (!msd_ready && gif_viewer_is_open()) {
@@ -2604,6 +2733,17 @@ int main(void) {
         if (key == sk_Mode && second_held && !rename_mode && !search_mode) break;
         /* A key counts once per press. Holding it down doesn't run the modifiers again. */
         pressed = key != 0 && key != last_key;
+        /* The editor repeats arrows and Del while they are held. The other screens take one press per key. */
+        repeat_press = false;
+        if (editor_is_open() && key != 0 && key == last_key && key_repeats(key)) {
+            if ((uint32_t)clock() >= repeat_at) {
+                pressed = true;
+                repeat_press = true;
+                repeat_at = (uint32_t)clock() + (uint32_t)REPEAT_MS * CLOCKS_PER_SEC / 1000UL;
+            }
+        } else if (pressed) {
+            repeat_at = (uint32_t)clock() + (uint32_t)REPEAT_DELAY_MS * CLOCKS_PER_SEC / 1000UL;
+        }
         last_key = key;
         letter = 0;
         typed = 0;
@@ -2611,14 +2751,30 @@ int main(void) {
         if (pressed) {
             typing_now = search_mode;                       /* only y= feeds the search */
             letter = search_mode ? keys_char(key) : 0;
-            typed = rename_mode ? rename_char(key) : 0;      /* before the modifiers change */
+            typed = rename_mode ? rename_char(key) : (editor_is_open() ? editor_char(key) : 0);   /* before the modifiers change */
             page_key = keys_alpha_active() && (key == sk_Up || key == sk_Down);   /* before the modifiers change */
             /* With the info panel open, 2nd is its archive toggle, not the shift modifier. */
-            if (!(key == sk_2nd && var_info_is_open())) keys_process(key);
+            second_key = keys_2nd_active();          /* the editor's 2nd + Left/Right, read before the modifiers change */
+            if (!repeat_press && !(key == sk_2nd && var_info_is_open())) keys_process(key);   /* a repeat is not a new modifier press */
             needs_redraw = true;         /* indicators may have changed */
         }
 
-        if (gif_viewer_is_open()) {
+        if (editor_is_open()) {
+            /* Mode opens the color menu here too; while it is open it takes the keys. */
+            if (settings_open) {
+                if (pressed) settings_key(key);
+            } else if (pressed && key == sk_Mode && !second_held) {
+                settings_begin();
+            } else if (pressed) {
+                write_ok = key == sk_Graph;      /* only Graph (save) may write to the drive */
+                if (editor_key(key, typed, page_key, second_key) == EDIT_SAVED) {
+                    write_ok = false;
+                    finish_writes();             /* flush the saved file */
+                }
+                write_ok = false;
+            }
+            needs_redraw = true;
+        } else if (gif_viewer_is_open()) {
             if (gif_viewer_key(key)) {
                 restore_palette();
                 needs_redraw = true;
@@ -2708,6 +2864,10 @@ int main(void) {
                         set_status("Zoom: unassigned");
                     }
                     break;
+                case sk_Vars:
+                    if (location == LOC_DRIVE) start_edit();   /* Vars opens the selected .txt in the editor */
+                    else set_status("Vars: select a .txt file on the drive");
+                    break;
                 case sk_Trace:
                     if (location == LOC_DRIVE) mark_selected();
                     else set_status("Trace: unassigned");
@@ -2736,9 +2896,23 @@ int main(void) {
             status_changed = false;
             needs_redraw = true;
         }
+        if (editor_is_open() && editor_tick()) needs_redraw = true;   /* editor message timed out */
         gif_viewer_tick();                 /* animated GIFs step to their next frame */
         if (needs_redraw) {
-            if (viewer_is_open()) viewer_draw();
+            if (editor_is_open()) {
+                if (settings_open != editor_menu_was) {   /* the color menu came or went: redraw all */
+                    editor_force_full();
+                    editor_menu_was = settings_open;
+                }
+                editor_draw();
+            }
+            else if (viewer_is_open()) {
+                if (settings_open != viewer_menu_was) {   /* the color menu came or went: redraw all */
+                    viewer_force_full();
+                    viewer_menu_was = settings_open;
+                }
+                viewer_draw();
+            }
             else if (!image_is_open() && !gif_viewer_is_open()) draw();   /* pictures are drawn on open */
             needs_redraw = false;
         }
@@ -2750,6 +2924,16 @@ int main(void) {
      * cleanly. */
     show_now("Exiting...");
     if (viewer_is_open()) viewer_close();
+    if (editor_is_open()) {
+        if (editor_is_dirty()) {            /* leaving with unsaved text: keep a copy */
+            char copy[16];
+            write_ok = true;
+            editor_autosave(copy, sizeof(copy));
+            write_ok = false;
+            finish_writes();
+        }
+        editor_close();
+    }
     if (gif_viewer_is_open()) gif_viewer_close();
     if (image_is_open()) image_close();
     /* No drive unmount here: every operation already flushes the volume, and the

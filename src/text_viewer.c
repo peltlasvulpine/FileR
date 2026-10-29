@@ -49,6 +49,7 @@ void viewer_set_overlay(void (*fn)(void)) {
 
 static fat_t *vfat = NULL;           /* FAT volume the viewer reads from */
 static bool viewing = false;
+static bool vframe_ready = false;          /* the screen holds a frame the viewer drew (see viewer_draw) */
 static char view_name[16];
 static char view_path[VIEW_PATH_MAX];
 static uint32_t view_size = 0;       /* full size of the file on the drive */
@@ -476,6 +477,7 @@ bool viewer_open(fat_t *fat, const char *fpath, const char *name) {
     view_name[sizeof(view_name) - 1] = 0;
     view_goto = false;
     viewing = true;
+    vframe_ready = false;
     return true;
 }
 
@@ -513,41 +515,86 @@ bool viewer_key(uint8_t key) {
     return true;
 }
 
+/* What the last frame drew on each row, so the next frame only redraws rows that changed. */
+static char vrow_txt[VIEW_VISIBLE][VIEW_COLS + 1];
+static char vprev_txt[VIEW_VISIBLE][VIEW_COLS + 1];
+static bool vprev_ok[VIEW_VISIBLE];
+static int vprev_top = 0;                  /* top row of the last frame */
+static bool vforce_full = false;           /* the next frame must redraw everything */
+
+void viewer_force_full(void) {
+    vforce_full = true;
+}
+
 void viewer_draw(void) {
-    char line[VIEW_COLS + 1];
     char info[40];
-    int i, n;
-    size_t k, end;
+    int i, shift;
+    bool full;
     uint32_t pct = 100;
 
-    gfx_FillScreen(VT_BG);
-
-    /* Title bar carries the file name as a header. */
-    gfx_SetColor(VT_TOP);
-    gfx_FillRectangle(0, 0, SCREEN_W, TITLE_H);
-    fmt(info, "View: %s", view_name);
-    text_at(6, 6, info, VT_TOPTXT, VT_TOP);
-
+    /* The text of each visible row. */
     for (i = 0; i < VIEW_VISIBLE; i++) {
         int row = view_top + i;
-        if (row >= view_rows) break;
-        size_t after;
+        size_t k, after, end;
+        int n = 0;
+
+        vrow_txt[i][0] = 0;
+        if (row >= view_rows) continue;
         k = view_row[row];
         end = row_end(k, &after);
-        n = 0;
-        while (k < end) {
+        while (k < end && n < VIEW_COLS) {
             char c = view_buf[k++];
             if (c == '\r') continue;
             if (c == '\t') c = ' ';
             else if (c < 32 || c > 126) c = '.';
-            line[n++] = c;
+            vrow_txt[i][n++] = c;
         }
-        line[n] = 0;
-        text_at(4, VIEW_TOP + i * VIEW_LINE_H, line, VT_TXT, VT_BG);
+        vrow_txt[i][n] = 0;
     }
     if (view_len == 0) {
-        text_at(4, VIEW_TOP, "(empty file)", VT_TXT, VT_BG);
+        strcpy(vrow_txt[0], "(empty file)");
     }
+
+    shift = view_top - vprev_top;
+    full = vforce_full || !vframe_ready || shift < 0 || shift >= VIEW_VISIBLE;   /* scrolling up redraws all */
+    vforce_full = false;
+    if (full) {
+        gfx_FillScreen(VT_BG);
+        for (i = 0; i < VIEW_VISIBLE; i++) vprev_ok[i] = false;
+    } else {
+        gfx_BlitScreen();                  /* start from the frame on screen */
+        if (shift > 0) {                   /* scrolled down: move the rows that stay on screen up */
+            int s;
+
+            gfx_CopyRectangle(gfx_buffer, gfx_buffer, 0, (uint8_t)(VIEW_TOP + shift * VIEW_LINE_H),
+                              0, VIEW_TOP, SCREEN_W, (uint8_t)((VIEW_VISIBLE - shift) * VIEW_LINE_H));
+            for (s = 0; s < VIEW_VISIBLE; s++) {
+                if (s + shift < VIEW_VISIBLE) {
+                    strcpy(vprev_txt[s], vprev_txt[s + shift]);
+                    vprev_ok[s] = vprev_ok[s + shift];
+                } else {
+                    vprev_ok[s] = false;
+                }
+            }
+        }
+    }
+    /* Rows: redraw only the ones whose text changed. */
+    for (i = 0; i < VIEW_VISIBLE; i++) {
+        if (vprev_ok[i] && strcmp(vprev_txt[i], vrow_txt[i]) == 0) continue;
+        if (!full) {                       /* erase the old row before drawing it again */
+            gfx_SetColor(VT_BG);
+            gfx_FillRectangle(0, VIEW_TOP + i * VIEW_LINE_H, SCREEN_W, VIEW_LINE_H);
+        }
+        if (vrow_txt[i][0]) text_at(4, VIEW_TOP + i * VIEW_LINE_H, vrow_txt[i], VT_TXT, VT_BG);
+        strcpy(vprev_txt[i], vrow_txt[i]);
+        vprev_ok[i] = true;
+    }
+
+    /* Title bar carries the file name as a header. Redrawn every frame, it is small. */
+    gfx_SetColor(VT_TOP);
+    gfx_FillRectangle(0, 0, SCREEN_W, TITLE_H);
+    fmt(info, "View: %s", view_name);
+    text_at(6, 6, info, VT_TOPTXT, VT_TOP);
 
     gfx_SetColor(VT_BOT);
     gfx_FillRectangle(0, SCREEN_H - STATUS_H, SCREEN_W, STATUS_H);
@@ -579,9 +626,12 @@ void viewer_draw(void) {
 
     if (overlay_fn) overlay_fn();   /* battery and modifier icons, on top of the title bar */
     gfx_SwapDraw();
+    vprev_top = view_top;
+    vframe_ready = true;
 }
 
 void viewer_close(void) {
+    vframe_ready = false;
     viewing = false;
     view_goto = false;
     cache_valid = false;

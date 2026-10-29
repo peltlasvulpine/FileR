@@ -18,6 +18,8 @@ char keys_char(uint8_t key);
 bool keys_alpha_active(void);
 /* True only for alpha lock (2nd + alpha). One-shot alpha is not alpha lock. */
 bool keys_alock_active(void);
+/* Turns alpha and alpha lock off (used when the folder changes). */
+void keys_alpha_off(void);
 /* True while 2nd is on for the next key. Call before keys_process. */
 bool keys_2nd_active(void);
 /* Draws the active modifier icons just left of the battery at battery_x, row y. */

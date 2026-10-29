@@ -20,6 +20,9 @@ bool viewer_open(fat_t *fat, const char *fpath, const char *name);
 bool viewer_is_open(void);
 bool viewer_key(uint8_t key);
 void viewer_draw(void);
+/* Makes the next viewer_draw() redraw the whole screen (for example after the color
+ * menu opens or closes, since the screen is reused from frame to frame). */
+void viewer_force_full(void);
 void viewer_close(void);
 /* A function the viewer calls after drawing its screen and before it shows it,
  * so main.c can add the battery and modifier icons. */
