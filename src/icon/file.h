@@ -9,7 +9,7 @@ extern "C" {
 #define file_height 18
 #define file_size 298
 #define file ((gfx_rletsprite_t*)file_data)
-extern unsigned char file_data[298];
+extern const unsigned char file_data[298];
 
 #ifdef __cplusplus
 }

@@ -9,7 +9,7 @@ extern "C" {
 #define lock_height 18
 #define lock_size 273
 #define lock ((gfx_rletsprite_t*)lock_data)
-extern unsigned char lock_data[273];
+extern const unsigned char lock_data[273];
 
 #ifdef __cplusplus
 }

@@ -9,7 +9,7 @@ extern "C" {
 #define image_height 18
 #define image_size 151
 #define image ((gfx_rletsprite_t*)image_data)
-extern unsigned char image_data[151];
+extern const unsigned char image_data[151];
 
 #ifdef __cplusplus
 }

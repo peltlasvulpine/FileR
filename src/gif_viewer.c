@@ -29,10 +29,17 @@ static const char *gif_msg = "";           /* why the last open failed */
 static char gif_msg_buf[40];               /* text for failures that include a number */
 static fat_file_t file;
 static bool file_open = false;
-static uint8_t blk[FILE_BLOCK];
+static uint8_t *blk;                       /* allocated by gif_viewer_alloc (heap) */
 static uint8_t *gif_buf = NULL;            /* the GIF file: needed until decoding is done */
 static bool gif_loaded = false;            /* the decoder holds this GIF */
 static int gif_w = 0, gif_h = 0;
+
+/* Allocates the GIF viewer's block buffer and the decoder's tables on the heap, at startup. */
+bool gif_alloc(void);
+bool gif_viewer_alloc(void) {
+    blk = calloc(FILE_BLOCK, 1);
+    return blk != NULL && gif_alloc();
+}
 
 /* Converted frames: runs of (count, palette index) per frame, plus each
  * distinct palette in RGB1555. A frame is expanded into `scratch` to draw. */
@@ -141,19 +148,19 @@ static uint32_t read_whole_file(fat_t *fat, const char *fpath) {
     uint32_t size, got = 0;
 
     if (fat_OpenFile(fat, fpath, 0, &file) != FAT_SUCCESS) {
-        set_msg("GIF: can't open file");
+        set_msg("Can't open file");
         return 0;
     }
     file_open = true;
     size = fat_GetFileSize(&file);
     if (size == 0 || size > GIF_FILE_MAX) {
-        set_msg(size == 0 ? "GIF: file is empty" : "GIF: file is over 32 KB");
+        set_msg(size == 0 ? "File is empty" : "File is over 32 KB");
         close_file();
         return 0;
     }
     gif_buf = malloc(size);
     if (!gif_buf) {
-        set_msg("GIF: no memory for file");
+        set_msg("No memory for file");
         close_file();
         return 0;
     }
@@ -166,7 +173,7 @@ static uint32_t read_whole_file(fat_t *fat, const char *fpath) {
     }
     close_file();
     if (got != size) {
-        set_msg("GIF: file read failed");
+        set_msg("File read failed");
         free(gif_buf);
         gif_buf = NULL;
         return 0;
@@ -229,7 +236,7 @@ static int build_rle(uint32_t n, uint32_t wh) {
     /* The store is one block of its full budget, so it never has to grow. */
     if (!fr_start || !fr_len || !fr_pal || !fr_delay) {
         free_frames();
-        set_msg("GIF: no memory for frames");
+        set_msg("No memory for frames");
         return 2;
     }
     rle = malloc(RLE_BUDGET);
@@ -377,7 +384,7 @@ bool gif_viewer_open(fat_t *fat, const char *fpath) {
         /* Every frame fits: decoding is done, playback never runs the decoder. */
         scratch = malloc(wh + 2);          /* the expanded frame, only needed from here on */
         if (!scratch) {
-            set_msg("GIF: no memory for frames");
+            set_msg("No memory for frames");
             gif_close();
             return false;
         }
@@ -423,7 +430,7 @@ bool gif_viewer_open(fat_t *fat, const char *fpath) {
         ring_pal = NULL;
         ring_delay = NULL;
         if (gif_k == 1) {
-            set_msg("GIF: no memory for frames");
+            set_msg("No memory for frames");
             gif_close();
             return false;
         }

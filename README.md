@@ -3,12 +3,27 @@
 File manager for the TI-84 Plus CE (or similar) with USB support!
 This is mainly to be used **with** a USB connected. For more information on how to set this up, [check below](#how-to-format-a-usb-device-for-the-calculator).
 
-> Please have common sense when using this program, don't do something that will freeze the program, or break it, trying to move a folder into itself.
+> Please have common sense when using this program, don't do something that will freeze the program, or break it, like trying to move a folder into itself (although this is already handled to NOT let you do this).
 > If you do find glitches, please report them to me via [issues on GitHub](https://github.com/peltlasvulpine/FileR/issues)!
+
+Has been tested on CEmu and on actual hardware (TI-84 Plus CE) with OS 5.4.0.0034 .
+
+This wasn't made to be a shell, but use it as one if you want to.
 
 ### Status
 
-Almost finished with development.
+Targets the TI-84 Plus CE with OS 5.4.0.0034
+
+Main app is complete but new features are bound to come.
+Some things are a little unstable still, fixes will be applied in the future.
+
+### How to build
+
+1. Make sure you have the [CE C toolchain](https://github.com/CE-Programming/toolchain) installed and added to your path.
+2. Ensure you've cloned this GitHub repository.
+3. Run `make -j install-kit` from this repository's root. (Or, if you've already built this and want to do a fresh build, run `make clean-install && make -j install-kit` from repo root.)
+4. Copy all `.8xp` & `.8xv` files to your calculator via external tools.
+
 
 ## Current capabilities & checklist
 
@@ -16,27 +31,26 @@ Almost finished with development.
 - [x] Move files
 - [x] Rename files
 - [x] Copy files
-- [ ] Write to files
+- [x] Write to files
 - [x] List files
 - [x] Filter through files
 - [x] Nice(ish) UI
+- [ ] Clock (why didn't I think of this sooner???)
 - [x] Battery display
 - [x] Charging handling(ish)
 - [x] Icon support (colors are a little messed up & sometimes doesnt find the icon)
+- [ ] Program execution
+- [x] Showing apps
+- [ ] App execution
 - [x] USB support
 - [x] USB partition support
 - [x] USB partition names
-- [ ] Copy from USB to calculator
+- [x] Copy from USB to calculator
+- [x] Copy from calculator to USB
 
-### Current limitations
+### Supported File types
 
-- Can't edit/write
-- Can't copy programs to the calculator
-- Since `fileioc.h` doesn't expose apps, I can't add them into the filter list
-
-### Supported Filetypes
-
-These are the currently supported filetypes (to open)
+These are the currently supported file types (to open)
 
 - `.txt`
 - `.html`
@@ -54,7 +68,7 @@ These are the currently supported filetypes (to open)
 | Down | Move selection down (Move down 10 (Alpha))|
 | 2nd | Toggle Shift |
 | Alpha | Toggle Alpha / Alpha Lock (Shift) |
-| Y = | Search |
+| Y= | Search |
 | Graph | Change filters |
 | Clear | Clear actions |
 | Mode | Open customization menu / Exit FileR (Shift) |
@@ -67,10 +81,11 @@ These are the currently supported filetypes (to open)
 | Key | Action |
 |---|---|
 | Window | Open calculator variable info |
+| Trace | Export current selection |
 | Enter | Open USB / Open USB partitions (If more than one) |
 
-> Pressing Window while selecting USB will give an option to unmount by pressing 2nd.
-> Unmounting isn't required to remove the USB, and when exiting the program, the USB device will not auto-unmount
+> Pressing Window while selecting USB will give an option to unmount by pressing 2nd
+> Unmounting isn't required to remove the USB, & when exiting the program, the USB device will not auto-unmount
 
 #### Inside `/usb`
 
@@ -79,6 +94,7 @@ These are the currently supported filetypes (to open)
 | Window | Open `Files` Submenu |
 | Zoom | Open `Actions` Submenu |
 | Trace | Mark / Select an entry |
+| Vars | Edit a text file |
 | Enter | Enter actions |
 
 #### Text Viewer
@@ -90,9 +106,40 @@ These are the currently supported filetypes (to open)
 | Left | Go one page up |
 | Right | Go one page down |
 | Graph | Jump to |
-| Zoom | Toggles between percentage and line jump |
+| Zoom | Toggles between percentage & line jump |
 | Enter | Close the text viewer |
 | Clear | Close the text viewer |
+
+#### Text Editor
+> Exiting the text editor with 2nd + Mode (Quit) will generate an autosave in that text file's directory
+##### Keybinds
+| Key | Action |
+|---|---|
+| Up | Go one line up / Go one page up (Alpha) |
+| Down | Go one line down / Go one page down (Alpha) |
+| Left | Move cursor one character left |
+| Right | Move cursor one character right |
+| Trace | Jump to |
+| Zoom | Toggles between percentage & line jump |
+| Clear | Close the text editor |
+
+##### Special character entry
+| Key | Modifier | Character |
+|---|---|---|
+| Left | Alpha | `<` |
+| Right | Alpha | `>` |
+| `.` | Shift | `;` |
+| `-` |  | `~` |
+
+
+#### Variable info viewer
+| Key | Action |
+|---|---|
+| Y= | Rename |
+| Window | Close calculator variable info |
+| Zoom | Archive / Unarchive |
+| Trace | Lock / Unlock |
+| Graph | Hide / Show |
 
 #### Actions
 
@@ -103,7 +150,7 @@ These are the currently supported filetypes (to open)
 | On an image file | Open / Close the image viewer |
 | On a GIF file | Open / Close the GIF viewer |
 
-> While viewing a GIF, you should hold down Enter if you want to exit.
+> While viewing a GIF, you should hold down Enter / Clear / Del if you want to exit.
 
 ##### Clear
 | Context | Action |
@@ -117,18 +164,22 @@ These are the currently supported filetypes (to open)
 | On a GIF file | Close the GIF viewer |
 
 > Aborting an action is really hit-and-miss, you might have to spam Clear sometimes.
-> When viewing a GIF, you should hold down Clear if you want to exit
+> While viewing a GIF, you should hold down Enter / Clear / Del if you want to exit.
 
 #### Submenus
 
 ##### `Files`
 - New Folder
 - Delete
+- New File
 
 ##### `Actions`
 - Rename
 - Move here
 - Copy here
+- Edit
+- Hide
+- Send to calc
 
 #### Customization menu
 
@@ -146,6 +197,7 @@ Press Enter to save, press Mode / Clear to cancel
 | `Store` | Where the file is stored (Archive / RAM) |
 | `Show` | Type of entry to show (Folder / File) |
 | `Ext` | Extension type (`.txt`, `.html`, `.bmp`, etc.) |
+| `Sort` | How to sort (`A-Z` / `Z-A`)
 
 ### How to format a USB device for the calculator
 
@@ -156,10 +208,10 @@ Please note that this only works with drives of **32 GB or less**
 
 To connect a USB device, use a mini USB adapter with OTG support.
 
-If a USB device takes a long time to connect, it is usually because:
+If a USB device takes some time to connect, it is usually because:
 1. It's the first time the USB device has been connected.
-2. Contents on the USB device have been changed off-calculator.
-3. The calculator's RAM has been reset
+2. Contents on the USB device have been changed. (Yes, this usually also happens if you edit files on-calculator)
+3. The calculator's RAM has been reset.
 
 #### Windows (11/10)
 
@@ -199,7 +251,7 @@ sudo dnf install gparted
     1. If it says "*msdos*" or "*MBR*", then continue to #6
     2. If it doesn't say "*msdos*" or "*MBR*", then continue to #4
 4. Unmount all partitions.
-5. Select "*Create Partition Table...*" under "*Device*" and set the *Partition Table Type* dropdown to "*msdos*" or "*MBR*" (This is the part that wipes the USB)
+5. Select "*Create Partition Table...*" under "*Device*"&set the *Partition Table Type* dropdown to "*msdos*" or "*MBR*" (This is the part that wipes the USB)
 6. After the operation finishes, right-click the unallocated space & select "*New*"
 7. Change *File system* to FAT32.
 8. Edit other settings to your liking.
@@ -207,15 +259,48 @@ sudo dnf install gparted
 
 #### macOS
 
-sorry i don't use macOS, i can't help you here, just check a tutorial online :C
+Sorry, I don't personally use macOS, just check for a tutorial online.
+
+### List of external tools
+
+Here's a list of software I've used to transfer stuff to my calculator
+- [TI Connect™ CE](https://education.ti.com/en/products/computer-software/ti-connect-ce-sw)
+- [TiLP](http://lpg.ticalc.org/prj_tilp/)
+- [WebTILP](https://tiplanet.org/scripts/webtilibs/webtilp.html)
 
 ## Screenshots
 
-These screenshots are outdated, but I'm too lazy to fix this.
+I'll update this with screenshots later
 
-![Example view of what you'd see when you open the program](screenshots/homescreen.jpeg)
+---
 
-![Example view of a FAT32 USB with multiple partitions](screenshots/usbpartitions.jpeg)
+#### Credits & Third-Party Code
 
-![Example view of the files of a FAT32 USB](screenshots/usbfiles.jpeg)
+FileR incorporates certain code and ideas from the following open-source projects:
 
+- [**CEaShell**](https://github.com/RoccoLoxPrograms/CEaShell)
+  - Authors: RoccoLox Programs and TIny_Hacker
+  - License: GNU General Public License v3.0 (GPL-3.0)
+
+- [**Cesium**](https://github.com/mateoconlechuga/cesium)
+  - Author: Matt "MateoConLechuga" Waltz
+  - License: BSD 3-Clause
+
+Original copyright notices and applicable license terms are retained.
+See the respective repositories for their full license terms.
+
+---
+
+#### Disclaimer
+
+> *FileR is a community-made project and is not affiliated with, endorsed by, or connected to Texas Instruments. TI-84 Plus CE and TI Connect™ CE are trademarks of Texas Instruments.*
+
+---
+
+#### License
+
+FileR is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+
+You are free to use, modify, and redistribute this software, provided that all redistributed derivative works remain licensed under GPL-3.0 and retain the appropriate copyright and license notices.
+
+See [`LICENSE`](LICENSE) for the full license text.

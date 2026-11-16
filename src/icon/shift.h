@@ -9,7 +9,7 @@ extern "C" {
 #define shift_height 18
 #define shift_size 114
 #define shift ((gfx_rletsprite_t*)shift_data)
-extern unsigned char shift_data[114];
+extern const unsigned char shift_data[114];
 
 #ifdef __cplusplus
 }

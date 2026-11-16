@@ -6,6 +6,7 @@
 #include <graphx.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <ctype.h>
 #include <fatdrvce.h>
 #include "image_viewer.h"
@@ -20,10 +21,20 @@
 static bool showing = false;
 static fat_file_t file;
 static bool file_open = false;
-static uint8_t blk[FILE_BLOCK];
+static uint8_t *blk;                       /* allocated by image_viewer_alloc (heap) */
 static uint32_t blk_pos = FILE_BLOCK;      /* next unread byte in blk */
-static uint8_t row[ROW_MAX];
-static uint8_t bmp_map[256];               /* BMP palette index -> 3-3-2 color */
+static uint8_t *row;
+static uint8_t *bmp_map;                   /* BMP palette index -> 3-3-2 color */
+static uint16_t *pal;                      /* the 256-color palette, RGB1555 */
+
+/* Allocates the image viewer's buffers on the heap, at startup (see mem_init). */
+bool image_viewer_alloc(void) {
+    blk = calloc(FILE_BLOCK, 1);
+    row = calloc(ROW_MAX, 1);
+    bmp_map = calloc(256, 1);
+    pal = calloc(256, sizeof(uint16_t));
+    return blk && row && bmp_map && pal;
+}
 
 static bool has_bmp_ext(const char *name) {
     const char *dot = strrchr(name, '.');
@@ -77,7 +88,6 @@ static void close_file(void) {
 
 /* Sets the palette to 256 colors covering the 3-3-2 cube. */
 static void set_image_palette(void) {
-    static uint16_t pal[256];
     int i;
 
     for (i = 0; i < 256; i++) {
@@ -86,7 +96,7 @@ static void set_image_palette(void) {
         uint8_t b = (uint8_t)((i & 3) * 255 / 3);
         pal[i] = gfx_RGBTo1555(r, g, b);
     }
-    gfx_SetPalette(pal, sizeof(pal), 0);
+    gfx_SetPalette(pal, 256 * sizeof(uint16_t), 0);
 }
 
 bool image_can_open(const char *name) {

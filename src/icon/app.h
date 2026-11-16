@@ -9,7 +9,7 @@ extern "C" {
 #define app_height 18
 #define app_size 103
 #define app ((gfx_rletsprite_t*)app_data)
-extern unsigned char app_data[103];
+extern const unsigned char app_data[103];
 
 #ifdef __cplusplus
 }

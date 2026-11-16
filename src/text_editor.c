@@ -22,7 +22,8 @@
 #define Y0          (TITLE_H + 2)
 #define ROW_H       10
 #define ROWS        ((SCREEN_H - STATUS_H - Y0) / ROW_H)
-#define JUMP_DIGITS_MAX 6              /* most digits typed for a line number */
+#define JUMP_DIGITS_MAX 6          /* most digits typed for a line number */
+#define EPATH_MAX  160             /* the editor's file path, allocated at startup */
 
 /* Palette entries, the same as the text viewer's */
 #define C_BG        0x40
@@ -41,7 +42,7 @@ static bool dirty = false;                 /* changed since the last save */
 static bool leave_armed = false;           /* Clear was pressed once with unsaved changes */
 static bool open_now = false;
 static fat_t *efat = NULL;
-static char epath[160];
+static char *epath;
 #define MSG_MS      2500               /* a status message stays this long, like main.c's */
 static char msg[48] = "";                  /* message on the status line */
 static uint32_t msg_at = 0;                /* clock() value when the message was set */
@@ -53,7 +54,7 @@ static uint32_t jump_val = 0;              /* the number typed so far */
 static int jump_digits = 0;                /* how many digits are typed */
 static const char *err = "";
 static void (*overlay_fn)(void) = NULL;   /* set by main.c: battery, modifier icons, colors */
-static uint8_t sblk[FAT_BLOCK_SIZE];
+static uint8_t *sblk;
 static uint32_t nl_total = 0;              /* newlines in the text, kept up to date on every edit */
 static uint32_t top_line = 1;              /* line number of the first row shown (set while drawing) */
 static bool anchor_ok = false;             /* the anchor below is a known row start: layout begins there */
@@ -61,22 +62,34 @@ static uint32_t anchor_off = 0;            /* byte offset of a row start at or a
 static uint32_t anchor_line = 1;           /* the line number at that offset */
 static int anchor_row = 0;                 /* that row's index, counted from the top of the file */
 static bool anchor_fresh = true;           /* the anchor starts a line (so it gets a number), not a wrapped row */
-static uint8_t cw_tab[128];                /* pixel width of each character, 0 = not looked up yet */
-static char rowtxt[ROWS][48];              /* the text of each visible row, filled in by layout() */
-static char rownum[ROWS][8];               /* the line number shown on each row ("" if none) */
+static uint8_t *cw_tab;                /* pixel width of each byte, 0 = not looked up yet */
+static char (*rowtxt)[96];              /* the text of each visible row, filled in by layout() */
+static char (*rownum)[8];               /* the line number shown on each row ("" if none) */
 static uint8_t rowlen[ROWS];
 /* What the last frame drew on each row, so the next frame only redraws rows that changed. */
-static char prev_txt[ROWS][48];
-static char prev_num[ROWS][8];
+static char (*prev_txt)[48];
+static char (*prev_num)[8];
 static int prev_cur_x[ROWS];               /* x of the cursor bar on that row, -1 if none */
 static bool prev_ok[ROWS];                 /* the prev_ entries describe what is on screen */
 static int prev_top = 0;                   /* top row of the last frame */
 static bool frame_ready = false;           /* the screen holds a frame the editor drew */
 static bool force_full = false;            /* the next frame must redraw everything */
 
+/* Allocates the editor's buffers on the heap, at startup (see mem_init). */
+bool text_editor_alloc(void) {
+    epath = calloc(EPATH_MAX, 1);
+    sblk = calloc(FAT_BLOCK_SIZE, 1);
+    cw_tab = calloc(256, 1);
+    rowtxt = calloc(ROWS, 96);
+    rownum = calloc(ROWS, 8);
+    prev_txt = calloc(ROWS, 48);
+    prev_num = calloc(ROWS, 8);
+    return epath && sblk && cw_tab && rowtxt && rownum && prev_txt && prev_num;
+}
+
 /* Pixel width of a character, looked up once and then kept in cw_tab. */
 static int char_w(char c) {
-    uint8_t k = (uint8_t)c & 0x7F;
+    uint8_t k = (uint8_t)c;
 
     if (!cw_tab[k]) cw_tab[k] = (uint8_t)gfx_GetCharWidth((char)k);
     return cw_tab[k];
@@ -199,8 +212,8 @@ static void layout(bool draw, int tx, int *cur_row, int *cur_x) {
             continue;
         }
         if (c == '\t') c = ' ';
-        if (c < 32 || c > 126) c = '?';
-        w = char_w((char)c);
+        else if (c == 0) c = '.';          /* a NUL would end the string */
+        w = (c == '\r') ? 0 : char_w((char)c);   /* CR is a line-ending byte: no room, not drawn */
         if (x + w > X1) {                 /* too wide for this row: wrap */
             row++;
             x = tx;
@@ -212,7 +225,7 @@ static void layout(bool draw, int tx, int *cur_row, int *cur_x) {
                 anchor_fresh = false;
             }
         }
-        if (draw && row >= top && row < top + ROWS && rowlen[row - top] < sizeof(rowtxt[0]) - 1) {
+        if (draw && row >= top && row < top + ROWS && c != '\r' && rowlen[row - top] < sizeof(rowtxt[0]) - 1) {
             rowtxt[row - top][rowlen[row - top]++] = (char)c;
         }
         x += w;
@@ -336,8 +349,8 @@ void editor_draw(void) {
             if (jump_digits) fmt(info, "Jump to line: %lu_  Zoom: %%", (unsigned long)jump_val);
             else fmt(info, "Jump to line: _  Zoom: %%");
         } else {
-            if (jump_digits) fmt(info, "Jump to %%: %lu_  Zoom: line", (unsigned long)jump_val);
-            else fmt(info, "Jump to %%: _  Zoom: line");
+            if (jump_digits) fmt(info, "Jump to %%: %lu_  Zoom: Line", (unsigned long)jump_val);
+            else fmt(info, "Jump to %%: _  Zoom: Line");
         }
         gfx_PrintStringXY(info, 4, SCREEN_H - STATUS_H + 3);
     } else {
@@ -564,24 +577,24 @@ bool editor_open(fat_t *fat, const char *fpath, bool is_new) {
 
     editor_close();
     err = "";
-    if (strlen(fpath) >= sizeof(epath)) {
-        err = "Edit: path too long";
+    if (strlen(fpath) >= EPATH_MAX) {
+        err = "Path too long";
         return false;
     }
     buf = malloc(EDIT_MAX);
     if (!buf) {
-        err = "Edit: no memory";
+        err = "No memory";
         return false;
     }
     if (!is_new) {
         if (fat_OpenFile(fat, fpath, 0, &f) != FAT_SUCCESS) {
-            err = "Edit: can't open file";
+            err = "Can't open file";
             goto fail;
         }
         size = fat_GetFileSize(&f);
         if (size > EDIT_MAX) {
             fat_CloseFile(&f);
-            err = "Edit: over 16 KB";
+            err = "Over 16 KB";
             goto fail;
         }
         while (got < size) {
@@ -593,7 +606,7 @@ bool editor_open(fat_t *fat, const char *fpath, bool is_new) {
         }
         fat_CloseFile(&f);
         if (got != size) {
-            err = "Edit: read failed";
+            err = "Read failed";
             goto fail;
         }
         len = size;
@@ -608,8 +621,8 @@ bool editor_open(fat_t *fat, const char *fpath, bool is_new) {
         }
     }
     efat = fat;
-    strncpy(epath, fpath, sizeof(epath) - 1);
-    epath[sizeof(epath) - 1] = 0;
+    strncpy(epath, fpath, EPATH_MAX - 1);
+    epath[EPATH_MAX - 1] = 0;
     cursor = 0;
     top = 0;
     top_byte = 0;

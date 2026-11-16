@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <msddrvce.h>
 #include "lfn_fix.h"
 
@@ -31,9 +32,16 @@ typedef struct {
     uint8_t  nfats;
 } geo_t;
 
-/* Scratch sectors. Only one of each is in use at a time. */
-static uint8_t dir_sec[SECTOR];
-static uint8_t fat_sec[SECTOR];
+/* Scratch sectors. Only one of each is in use at a time. Allocated on the heap by
+ * lfn_alloc at startup, so they are not in static RAM. */
+static uint8_t *dir_sec;
+static uint8_t *fat_sec;
+
+bool lfn_alloc(void) {
+    dir_sec = calloc(SECTOR, 1);
+    fat_sec = calloc(SECTOR, 1);
+    return dir_sec && fat_sec;
+}
 
 static uint32_t rd16(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
@@ -591,3 +599,34 @@ bool lfn_move_entry(msd_t *msd, uint32_t part, const char *src_path, const char 
     dir_sec[spos.off] = DELETED;
     return msd_Write(msd, spos.lba, 1, dir_sec) == 1;
 }
+
+/* Sets and clears attribute bits (for example FAT_HIDDEN) on the short entry of
+ * full_path, with a raw directory edit. Nothing else in the entry changes. The
+ * volume must be closed (flushed) first. Works for files and folders with long names. */
+bool lfn_set_attrib(msd_t *msd, uint32_t part, const char *full_path, uint8_t set, uint8_t clear) {
+    geo_t g;
+    const char *fname;
+    char dirp[160];
+    size_t dl;
+    uint32_t cluster, dummy;
+    lfn_list_t run;
+    lfn_pos_t spos;
+
+    if (!geo_load(msd, part, &g)) return false;
+    fname = strrchr(full_path, '/');
+    if (!fname) return false;
+    dl = (size_t)(fname - full_path);
+    if (dl == 0) dl = 1;
+    if (dl >= sizeof(dirp)) return false;
+    memcpy(dirp, full_path, dl);
+    dirp[dl] = 0;
+    fname++;
+
+    if (!resolve_dir(msd, &g, dirp, &cluster)) return false;
+    if (!dir_search(msd, &g, cluster, fname, false, &dummy, &run, &spos)) return false;
+
+    if (msd_Read(msd, spos.lba, 1, dir_sec) != 1) return false;
+    dir_sec[spos.off + 11] = (uint8_t)((dir_sec[spos.off + 11] | set) & ~clear);   /* attribute byte */
+    return msd_Write(msd, spos.lba, 1, dir_sec) == 1;
+}
+

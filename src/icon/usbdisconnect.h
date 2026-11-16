@@ -9,7 +9,7 @@ extern "C" {
 #define usbdisconnect_height 18
 #define usbdisconnect_size 184
 #define usbdisconnect ((gfx_rletsprite_t*)usbdisconnect_data)
-extern unsigned char usbdisconnect_data[184];
+extern const unsigned char usbdisconnect_data[184];
 
 #ifdef __cplusplus
 }

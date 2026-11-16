@@ -9,7 +9,7 @@ extern "C" {
 #define battmedlow_height 18
 #define battmedlow_size 68
 #define battmedlow ((gfx_rletsprite_t*)battmedlow_data)
-extern unsigned char battmedlow_data[68];
+extern const unsigned char battmedlow_data[68];
 
 #ifdef __cplusplus
 }

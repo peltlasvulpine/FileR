@@ -52,9 +52,15 @@ static uint8_t prev_disposal = 0;
 /* LZW dictionary */
 static uint16_t *lzw_prefix = NULL;
 static uint8_t *lzw_suffix = NULL;
-static uint16_t rowmap[GIF_MAX_H];
+static uint16_t *rowmap = NULL;            /* allocated by gif_alloc (heap) */
 static uint8_t *lzw_stack = NULL;          /* a string being written out, last byte first */
 static uint32_t lzw_cap = 0;               /* entries the tables have room for */
+
+/* Allocates the decoder's row map on the heap, at startup (see mem_init). */
+bool gif_alloc(void) {
+    rowmap = calloc(GIF_MAX_H, sizeof(uint16_t));
+    return rowmap != NULL;
+}
 
 static uint16_t rd16(const uint8_t *p) {
     return (uint16_t)(p[0] | (p[1] << 8));

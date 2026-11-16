@@ -53,6 +53,11 @@ bool lfn_add_long(msd_t *msd, uint32_t part, const char *dir_path, const char *s
  * name is taken, or src_path isn't a folder. Volume must be closed. */
 bool lfn_move_entry(msd_t *msd, uint32_t part, const char *src_path, const char *dst_dir);
 
+/* Sets and clears attribute bits on the short entry of full_path (for example
+ * FAT_HIDDEN), by a raw directory edit. Nothing else changes. The volume must be
+ * closed or flushed first. Works for names that have long-name entries. */
+bool lfn_set_attrib(msd_t *msd, uint32_t part, const char *full_path, uint8_t set, uint8_t clear);
+
 /* Recounts the free clusters from the FAT and writes the count into FSInfo.
  * Reads the whole FAT, so call it on unmount, not on every delete. The volume
  * must be closed. */

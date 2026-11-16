@@ -4,7 +4,7 @@
  *   viewer_can_open(name)            - true for .txt, .html and .htm names
  *   viewer_open(&fat, path, name)    - load a file and show it
  *   viewer_is_open()                 - true while the viewer is on screen
- *   viewer_key(key)                  - handle a key; returns true if redraw needed
+ *   viewer_key(key, page)            - handle a key; page is true for alpha + Up/Down; returns true if redraw needed
  *   viewer_draw()                    - draw the viewer screen
  *   viewer_close()                   - leave the viewer (e.g. drive unplugged)
  */
@@ -18,7 +18,7 @@
 bool viewer_can_open(const char *name);
 bool viewer_open(fat_t *fat, const char *fpath, const char *name);
 bool viewer_is_open(void);
-bool viewer_key(uint8_t key);
+bool viewer_key(uint8_t key, bool page);
 void viewer_draw(void);
 /* Makes the next viewer_draw() redraw the whole screen (for example after the color
  * menu opens or closes, since the screen is reused from frame to frame). */

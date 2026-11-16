@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 #define sizeof_mypalette 78
-extern unsigned char mypalette[78];
+extern const unsigned char mypalette[78];
 
 #ifdef __cplusplus
 }

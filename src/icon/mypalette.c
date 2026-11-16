@@ -1,4 +1,4 @@
-unsigned char mypalette[78] =
+const unsigned char mypalette[78] =
 {
     0x00, 0x00, /*   0: rgb(  0,   0,   0) */
     0x15, 0x81, /*   1: rgb(  0,  69, 173) */

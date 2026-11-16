@@ -3,3 +3,4 @@ bin/
 .DS_Store
 src/icon/convimg.yaml.lst
 diffs.txt
+files.txt

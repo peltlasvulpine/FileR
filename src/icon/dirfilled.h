@@ -9,7 +9,7 @@ extern "C" {
 #define dirfilled_height 14
 #define dirfilled_size 228
 #define dirfilled ((gfx_rletsprite_t*)dirfilled_data)
-extern unsigned char dirfilled_data[228];
+extern const unsigned char dirfilled_data[228];
 
 #ifdef __cplusplus
 }

@@ -7,10 +7,12 @@
 #include <graphx.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <ctype.h>
 #include <fatdrvce.h>
 #include "fmt.h"
+#include "cache.h"
 #include "text_viewer.h"
 
 /* Layout and palette. These match main.c so the screen looks the same. */
@@ -38,7 +40,7 @@ void viewer_set_overlay(void (*fn)(void)) {
 
 #define VIEW_MAX       4096          /* bytes kept in memory at once */
 #define VIEW_ROWS_MAX  1024          /* wrapped rows kept in memory */
-#define VIEW_COLS      43            /* most characters in one row */
+#define VIEW_COLS      80            /* most characters in one row (narrow glyphs fit more) */
 #define VIEW_PX        312           /* widest a row may be in pixels (x=4 to x=316) */
 #define VIEW_TOP       20            /* first text row, below the title bar */
 #define VIEW_LINE_H    10
@@ -51,13 +53,12 @@ static fat_t *vfat = NULL;           /* FAT volume the viewer reads from */
 static bool viewing = false;
 static bool vframe_ready = false;          /* the screen holds a frame the viewer drew (see viewer_draw) */
 static char view_name[16];
-static char view_path[VIEW_PATH_MAX];
+static char *view_path;              /* allocated by text_viewer_alloc (heap, not static RAM) */
 static uint32_t view_size = 0;       /* full size of the file on the drive */
 static uint32_t view_base = 0;       /* file offset of view_buf[0] */
-static uint8_t view_block[FILE_BLOCK];
-static char view_buf[VIEW_MAX + 1];
+static uint8_t *view_block;
+static char *view_buf;
 static size_t view_len = 0;          /* bytes in view_buf that rows cover */
-static uint16_t view_row[VIEW_ROWS_MAX];   /* start index in view_buf of each row */
 static int view_rows = 0;
 static int view_top = 0;             /* first visible row */
 static bool view_goto = false;       /* Graph was pressed: typing a line number */
@@ -67,7 +68,6 @@ static int goto_digits = 0;          /* how many digits are typed */
 #define IDX_MAX     512          /* index entries kept */
 #define IDX_STRIDE0 1024         /* bytes between index entries at first; doubles when full */
 typedef struct { uint32_t off; uint32_t nl; } idx_t;   /* byte offset and newlines before it */
-static idx_t idx[IDX_MAX];
 static uint32_t idx_count = 0;
 static uint32_t idx_stride = IDX_STRIDE0;
 static uint32_t total_lines = 0;
@@ -77,6 +77,29 @@ static uint32_t cache_off = 0;       /* a byte offset in the file ... */
 static uint32_t cache_nl = 0;        /* ... and how many newlines come before it */
 static fat_file_t vf;                /* the open file, kept while the viewer is open */
 static bool vf_open = false;
+
+/* The index and the row table live on the heap (allocated by text_viewer_alloc). */
+#define ROW_CHUNK      32
+
+static idx_t *idx_tab;          /* IDX_MAX entries */
+static uint16_t *row_tab;       /* VIEW_ROWS_MAX row starts, each an offset into view_buf */
+
+static idx_t idx_at(uint32_t k) {
+    return idx_tab[k];
+}
+
+static void idx_set(uint32_t k, idx_t e) {
+    idx_tab[k] = e;
+}
+
+/* Start of row r inside view_buf. */
+static uint16_t row_at(int r) {
+    return row_tab[r];
+}
+
+static void rows_set(int first, const uint16_t *v, int n) {
+    memcpy(&row_tab[first], v, (size_t)n * sizeof(uint16_t));
+}
 
 /* Same drawing helper as main.c: sets fg, bg and transparent color together. */
 static void text_at(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
@@ -111,11 +134,42 @@ static bool has_text_ext(const char *name) {
  * following row starts (past any space or newline that was skipped). */
 /* Pixel width of one byte as it is drawn (see viewer_draw). The font is not
  * monospaced, so rows are limited by width as well as by character count. */
+/* Reads the character at view_buf[pos] and gives the one character to draw for it.
+ * Files are often UTF-8, and the calculator's font has no glyphs for the bytes of a
+ * multi-byte character. Common punctuation maps to a plain ASCII character; any other
+ * multi-byte character becomes '?'. Returns how many bytes the character used. */
+static size_t view_char(size_t pos, char *out) {
+    uint8_t b = (uint8_t)view_buf[pos];
+    size_t left = view_len - pos;
+    size_t len;
+
+    if (b < 0x80) {
+        *out = (char)b;
+        return 1;
+    }
+    if (b == 0xE2 && left >= 3 && (uint8_t)view_buf[pos + 1] == 0x80) {
+        uint8_t c = (uint8_t)view_buf[pos + 2];
+        if (c == 0x93 || c == 0x94) { *out = '-'; return 3; }    /* en dash, em dash */
+        if (c == 0x98 || c == 0x99) { *out = '\''; return 3; }   /* curly single quotes */
+        if (c == 0x9C || c == 0x9D) { *out = '"'; return 3; }    /* curly double quotes */
+        if (c == 0xA6) { *out = '.'; return 3; }                 /* ellipsis: one dot */
+    }
+    /* Any other character: skip its whole sequence and show one '?'. A lone
+     * continuation byte (0x80-0xBF) is one byte. */
+    if ((b & 0xE0) == 0xC0) len = 2;
+    else if ((b & 0xF0) == 0xE0) len = 3;
+    else if ((b & 0xF8) == 0xF0) len = 4;
+    else len = 1;
+    if (len > left) len = left;
+    *out = '?';
+    return len;
+}
+
 static int char_px(char c) {
     if (c == '\r') return 0;
     if (c == '\t') c = ' ';
-    else if (c < 32 || c > 126) c = '.';
-    return gfx_GetCharWidth(c);
+    else if (c == 0) c = '.';            /* a NUL would end the string, so it shows as a dot */
+    return gfx_GetCharWidth((char)(uint8_t)c);   /* every other byte has its own TI font glyph */
 }
 
 static size_t row_end(size_t start, size_t *next) {
@@ -123,7 +177,10 @@ static size_t row_end(size_t start, size_t *next) {
     int px = 0;
 
     while (pos < view_len && view_buf[pos] != '\n') {
-        if (col == VIEW_COLS || px + char_px(view_buf[pos]) > VIEW_PX) {
+        char ch;
+        size_t used = view_char(pos, &ch);
+
+        if (col == VIEW_COLS || px + char_px(ch) > VIEW_PX) {
             size_t sp = pos;   /* first byte that doesn't fit */
             if (view_buf[pos] == ' ') {          /* row ends exactly at a space */
                 *next = pos + 1;
@@ -137,8 +194,8 @@ static size_t row_end(size_t start, size_t *next) {
             *next = pos;                         /* one long word: hard cut */
             return pos;
         }
-        px += char_px(view_buf[pos]);
-        pos++;
+        px += char_px(ch);
+        pos += used;
         col++;
     }
     /* Ended at a newline (consumed) or at the end of the window. */
@@ -149,16 +206,29 @@ static size_t row_end(size_t start, size_t *next) {
 /* Splits view_buf into rows with row_end(). If the row table fills up, the
  * window is cut to the bytes the rows cover, so nothing is shown without a row. */
 static void layout_view(void) {
-    size_t pos = 0, next;
+    size_t pos = 0, next = 0;
+    uint16_t chunk[ROW_CHUNK];
+    int n = 0, flushed = 0;
+    bool whole = false;
 
     view_rows = 0;
     while (view_rows < VIEW_ROWS_MAX) {
-        view_row[view_rows++] = (uint16_t)pos;
+        chunk[n++] = (uint16_t)pos;
+        view_rows++;
         row_end(pos, &next);
-        if (next >= view_len) return;   /* whole window laid out */
+        if (next >= view_len) {         /* whole window laid out */
+            whole = true;
+            break;
+        }
         pos = next;
+        if (n == ROW_CHUNK) {           /* write rows to the cache in blocks */
+            rows_set(flushed, chunk, n);
+            flushed += n;
+            n = 0;
+        }
     }
-    view_len = pos;                     /* row table full: keep only covered bytes */
+    if (n) rows_set(flushed, chunk, n);
+    if (!whole) view_len = pos;         /* row table full: keep only covered bytes */
 }
 
 static void view_clamp(void) {
@@ -216,14 +286,22 @@ static bool load_window(uint32_t base) {
  * with VIEW_BACK bytes of text above it. */
 static bool view_seek(uint32_t anchor) {
     uint32_t base = anchor > VIEW_BACK ? anchor - VIEW_BACK : 0;
-    int r, best = 0;
+    int lo, hi, best = 0;
 
     base &= ~(uint32_t)(FILE_BLOCK - 1);
     if (!load_window(base)) return false;
 
-    for (r = 0; r < view_rows; r++) {
-        if (view_base + view_row[r] <= anchor) best = r;
-        else break;
+    /* Row starts only go up, so the last row at or before anchor is a binary search. */
+    lo = 0;
+    hi = view_rows - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (view_base + row_at(mid) <= anchor) {
+            best = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
     }
     view_top = best;
     view_clamp();
@@ -232,7 +310,7 @@ static bool view_seek(uint32_t anchor) {
 
 /* Returns the file offset of the top row. */
 static uint32_t top_offset(void) {
-    return view_base + view_row[view_top];
+    return view_base + row_at(view_top);
 }
 
 /* Reloads the window when scrolling is close to either end of it. */
@@ -247,7 +325,7 @@ static void view_maybe_reload(void) {
 /* Shows a message on the bottom bar right away, before work that takes a
  * moment. The whole screen is redrawn, because the drawing buffer still holds
  * the last frame and only repainting the bar would leave that frame behind. */
-static char busy_buf[40];
+static char busy_buf[40];   /* small: stays static */
 static bool busy = false;
 
 static void show_busy(const char *msg) {
@@ -277,8 +355,10 @@ static void build_index(void) {
     idx_stride = IDX_STRIDE0;
     cache_valid = false;
     total_lines = 1;
-    idx[idx_count].off = 0;
-    idx[idx_count].nl = 0;
+    {
+        idx_t first = {0, 0};
+        idx_set(idx_count, first);
+    }
     idx_count++;
     if (view_size == 0 || !vopen() || !vseek_block(0)) return;
     next_rec = idx_stride;
@@ -288,12 +368,14 @@ static void build_index(void) {
         if (fat_ReadFile(&vf, 1, view_block) != 1) break;
         if (pos >= next_rec) {
             if (idx_count == IDX_MAX) {           /* full: keep every other entry */
-                for (j = 0; j < IDX_MAX / 2; j++) idx[j] = idx[2 * j];
+                for (j = 0; j < IDX_MAX / 2; j++) idx_set(j, idx_at(2 * j));
                 idx_count = IDX_MAX / 2;
                 idx_stride *= 2;
             }
-            idx[idx_count].off = pos;
-            idx[idx_count].nl = nl;
+            {
+                idx_t entry = {pos, nl};
+                idx_set(idx_count, entry);
+            }
             idx_count++;
             next_rec = pos + idx_stride;
         }
@@ -315,7 +397,8 @@ static uint32_t idx_find(uint32_t key, bool by_nl, bool strict) {
 
     while (lo < hi) {
         mid = (lo + hi + 1) / 2;
-        v = by_nl ? idx[mid].nl : idx[mid].off;
+        idx_t m = idx_at(mid);
+        v = by_nl ? m.nl : m.off;
         if (strict ? v < key : v <= key) lo = mid;
         else hi = mid - 1;
     }
@@ -326,7 +409,8 @@ static uint32_t idx_find(uint32_t key, bool by_nl, bool strict) {
  * the nearest known position, which is at most idx_stride bytes away. */
 static uint32_t line_at(uint32_t off) {
     uint32_t k = idx_find(off, false, false);
-    uint32_t start = idx[k].off, nl = idx[k].nl, pos, i, abs;
+    idx_t e = idx_at(k);
+    uint32_t start = e.off, nl = e.nl, pos, i, abs;
     bool ok = true;
 
     if (cache_valid && cache_off <= off && cache_off >= start) {
@@ -370,8 +454,9 @@ static bool find_line(uint32_t line, uint32_t *offset) {
     }
     want = line - 1;                        /* newlines to pass before the target line */
     k = idx_find(want, true, true);         /* last entry with fewer newlines than want */
-    nl = idx[k].nl;
-    start = idx[k].off;
+    idx_t e = idx_at(k);
+    nl = e.nl;
+    start = e.off;
     last_start = start;
     if (!vopen() || !vseek_block(start / FILE_BLOCK)) return false;
     pos = (start / FILE_BLOCK) * FILE_BLOCK;
@@ -461,8 +546,8 @@ bool viewer_can_open(const char *name) {
 
 bool viewer_open(fat_t *fat, const char *fpath, const char *name) {
     vfat = fat;
-    strncpy(view_path, fpath, sizeof(view_path) - 1);
-    view_path[sizeof(view_path) - 1] = 0;
+    strncpy(view_path, fpath, VIEW_PATH_MAX - 1);
+    view_path[VIEW_PATH_MAX - 1] = 0;
 
     vclose();
     if (!vopen() || !view_seek(0)) {
@@ -486,7 +571,7 @@ bool viewer_is_open(void) {
 }
 
 /* Up/Down scroll a row, Left/Right a page, Enter, Del or Clear goes back. */
-bool viewer_key(uint8_t key) {
+bool viewer_key(uint8_t key, bool page) {
     if (view_goto) {
         view_goto_key(key);
         return true;
@@ -498,8 +583,8 @@ bool viewer_key(uint8_t key) {
         return true;
     }
     switch (key) {
-        case sk_Up:    view_top--; break;
-        case sk_Down:  view_top++; break;
+        case sk_Up:    view_top -= page ? VIEW_VISIBLE : 1; break;   /* alpha + Up: page up */
+        case sk_Down:  view_top += page ? VIEW_VISIBLE : 1; break;   /* alpha + Down: page down */
         case sk_Left:  view_top -= VIEW_VISIBLE; break;
         case sk_Right: view_top += VIEW_VISIBLE; break;
         case sk_Enter:
@@ -516,9 +601,23 @@ bool viewer_key(uint8_t key) {
 }
 
 /* What the last frame drew on each row, so the next frame only redraws rows that changed. */
-static char vrow_txt[VIEW_VISIBLE][VIEW_COLS + 1];
-static char vprev_txt[VIEW_VISIBLE][VIEW_COLS + 1];
-static bool vprev_ok[VIEW_VISIBLE];
+static char (*vrow_txt)[VIEW_COLS + 1];
+static char (*vprev_txt)[VIEW_COLS + 1];
+static bool *vprev_ok;
+
+/* Allocates the viewer's buffers on the heap, at startup (see mem_init). */
+bool text_viewer_alloc(void) {
+    view_path = calloc(VIEW_PATH_MAX, 1);
+    view_block = calloc(FILE_BLOCK, 1);
+    view_buf = calloc(VIEW_MAX + 1, 1);
+    vrow_txt = calloc(VIEW_VISIBLE, VIEW_COLS + 1);
+    vprev_txt = calloc(VIEW_VISIBLE, VIEW_COLS + 1);
+    vprev_ok = calloc(VIEW_VISIBLE, 1);
+    idx_tab = calloc(IDX_MAX, sizeof(idx_t));
+    row_tab = calloc(VIEW_ROWS_MAX, sizeof(uint16_t));
+    return view_path && view_block && view_buf && vrow_txt && vprev_txt && vprev_ok
+        && idx_tab && row_tab;
+}
 static int vprev_top = 0;                  /* top row of the last frame */
 static bool vforce_full = false;           /* the next frame must redraw everything */
 
@@ -540,13 +639,14 @@ void viewer_draw(void) {
 
         vrow_txt[i][0] = 0;
         if (row >= view_rows) continue;
-        k = view_row[row];
+        k = row_at(row);
         end = row_end(k, &after);
         while (k < end && n < VIEW_COLS) {
-            char c = view_buf[k++];
+            char c;
+            k += view_char(k, &c);
             if (c == '\r') continue;
             if (c == '\t') c = ' ';
-            else if (c < 32 || c > 126) c = '.';
+            else if (c == 0) c = '.';
             vrow_txt[i][n++] = c;
         }
         vrow_txt[i][n] = 0;
@@ -605,8 +705,8 @@ void viewer_draw(void) {
             if (goto_digits) fmt(info, "Jump to line: %lu_  Zoom: %%", (unsigned long)goto_val);
             else fmt(info, "Jump to line: _  Zoom: %%");
         } else {
-            if (goto_digits) fmt(info, "Jump to %%: %lu_  Zoom: line", (unsigned long)goto_val);
-            else fmt(info, "Jump to %%: _  Zoom: line");
+            if (goto_digits) fmt(info, "Jump to %%: %lu_  Zoom: Line", (unsigned long)goto_val);
+            else fmt(info, "Jump to %%: _  Zoom: Line");
         }
     } else {
         if (view_size > 0) pct = (top_offset() * 100) / view_size;
