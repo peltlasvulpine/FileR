@@ -22,11 +22,8 @@ CXXFLAGS = -Wall -Wextra -Oz
 
 include $(shell cedev-config --makefile)
 
-# These are commands, not files. Without .PHONY, the installer/ folder makes the installer
-# target look up to date and it never runs.
-.PHONY: appvars installer install-kit
+.PHONY: appvars installer install-kit clean-install all-clean refresh-icons del-icons icons
 
-# Builds the app (bin/FileR.8ek) and splits it into the AppVars the installer copies to flash.
 appvars:
 	@echo "Creating the app..."
 	@$(MAKE)
@@ -37,22 +34,25 @@ appvars:
 
 installer:
 	@$(MAKE) -C installer
-	@echo "Bringing the installer over to `bin`"
-	mv installer/bin/AINSTALL.8xp bin/AINSTALL.8xp
+	@echo "Bringing the installer over to \`bin\`"
+	@mv installer/bin/AINSTALL.8xp bin/AINSTALL.8xp
 
-# Everything to install FileR on a calculator: the app AppVars (APP0, APP1, ...) and INSTALL.8xp
-install-kit: 
+install-kit: refresh-icons
 	@$(MAKE) appvars
 	@$(MAKE) installer
 	@echo "Moving debug-related files over to their own folder..."
-	mkdir -p bin/debug
-	mv bin/*.* bin/debug
-	mv bin/debug/*.8xp bin/debug/*.8xv bin
+	@mkdir -p bin/debug
+	@mv bin/*.* bin/debug
+	@mv bin/debug/*.8xp bin/debug/*.8xv bin
 	@echo "Finished!"
 	@echo "You should be ready to install FileR on your calculator now!"
 
 clean-install:
-	cd installer && make clean
+	@cd installer && make clean
+
+all-clean:
+	cd installer && $(MAKE) clean
+	@$(MAKE) clean
 
 refresh-icons:
 	@$(MAKE) del-icons
@@ -60,10 +60,12 @@ refresh-icons:
 
 del-icons:
 	@echo "Removing old icons..."
-	cd src/icon && rm -f *.c *.h *.lst
+	@cd src/icon && rm -f *.c *.h *.lst
 	@echo "Cleaned!"
 
 icons:
 	@echo "Creating icons..."
-	cd src/icon && convimg -i convimg.yaml
+	@cd src/icon && convimg -i convimg.yaml
 	@echo "Done!"
+
+all: install-kit

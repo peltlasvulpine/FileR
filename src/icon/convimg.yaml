@@ -1,12 +1,6 @@
-palettes:
-  - name: mypalette
-    fixed-entries:
-      - color: {index: 7, r: 255, g: 0, b: 255}
-    images: automatic
-
 converts:
   - name: icons
-    palette: mypalette
+    palette: xlibc
     transparent-index: 7
     style: rlet
     images:
@@ -15,6 +9,6 @@ outputs:
   - type: c
     include-file: gfx.h
     palettes:
-      - mypalette
+      - xlibc
     converts:
       - icons

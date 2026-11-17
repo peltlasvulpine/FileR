@@ -174,7 +174,7 @@ void perform_calc_delete(void) {
         /* No saved colors now: go back to the defaults, on screen as well. */
         memcpy(theme_idx, theme_default, THEME_ROLES);
         memcpy(theme_saved, theme_default, THEME_ROLES);
-        restore_palette();
+        theme_apply();
         set_status("Colors reset to default");
     } else {
         set_status(ok ? "Deleted variable" : "Delete failed (protected?)");

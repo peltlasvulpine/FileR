@@ -42,22 +42,18 @@ uint8_t settings_top = 0;           /* first role shown in the list (it scrolls)
 bool settings_fast = false;         /* the last change only moved the color menu: redraw just it */
 void draw_settings(void);           /* defined with the settings code */
 void make_path(char *out, const char *folder, const char *name);   /* defined with the path helpers */
-void restore_palette(void);         /* defined with the palette code */
 
 /* ---------- Palette ---------- */
 
-/* Icon palette, the theme colors, and the marked-file color. The image viewer
- * replaces the whole palette, so this runs again when an image closes. */
-void restore_palette(void) {
-    uint16_t theme[THEME_ROLES];
-    int r;
+/* Apply theme colors only to the reserved UI slots; icon slots are untouched. */
+void theme_apply(void) {
+    uint16_t color[THEME_ROLES];
+    int role;
 
-    gfx_SetPalette(mypalette, sizeof_mypalette, 0);  /* icon colors */
-    for (r = 0; r < THEME_ROLES; r++) {
-        theme[r] = palette256[theme_idx[r]];
-        gfx_SetPalette(&theme[r], sizeof(uint16_t), THEME_ROLE_SLOT[r]);
+    for (role = 0; role < THEME_ROLES; role++) {
+        color[role] = palette256[theme_idx[role]];
+        gfx_SetPalette(&color[role], sizeof(uint16_t), THEME_ROLE_SLOT[role]);
     }
-    gfx_SetPalette(ti_pal, sizeof(ti_pal), TI_PAL_BASE); /* TI-BASIC icon colors */
 }
 
 /* Copies the calculator's palette before the app changes any of it. Call once,
@@ -148,7 +144,7 @@ void settings_close(bool save) {
         }
     } else {
         memcpy(theme_idx, theme_saved, THEME_ROLES);
-        restore_palette();
+        theme_apply();
         set_status("Colors reverted");
     }
     settings_open = false;
@@ -192,7 +188,7 @@ void settings_key(uint8_t key) {
         settings_num = (uint8_t)n;
         settings_typing = true;
         theme_idx[settings_sel] = settings_num;
-        restore_palette();
+        theme_apply();
         needs_redraw = true;
         settings_fast = true;
         return;
@@ -207,10 +203,10 @@ void settings_key(uint8_t key) {
         settings_follow();
     } else if (key == sk_Left) {
         theme_idx[settings_sel]--;      /* wraps 0 -> 255 */
-        restore_palette();
+        theme_apply();
     } else if (key == sk_Right) {
         theme_idx[settings_sel]++;      /* wraps 255 -> 0 */
-        restore_palette();
+        theme_apply();
     } else if (key == sk_Enter) {
         settings_close(true);
         return;

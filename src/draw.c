@@ -557,7 +557,6 @@ typedef struct {
     uint8_t sprite[2 + ICON_PIXELS];
 } icon_cache_t;
 static icon_cache_t *icon_cache;           /* heap, allocated by draw_alloc (about 4.3 KB) */
-static uint8_t *icon_map;                  /* heap, 256 bytes: OS color -> palette slot (icon_use_os_colors) */
 static int icon_cache_next = 0;
 #define DESC_MAX 52                      /* CEAShell's limit for descriptions */
 static bool desc_cached = false;        /* the selected description is loaded (selected_description) */
@@ -565,8 +564,7 @@ static bool desc_cached = false;        /* the selected description is loaded (s
 /* Allocates the icon cache on the heap, at startup (see mem_init). */
 bool draw_alloc(void) {
     icon_cache = calloc(ICON_CACHE_N, sizeof(icon_cache_t));
-    icon_map = calloc(256, 1);
-    return icon_cache != NULL && icon_map != NULL;
+    return icon_cache != NULL;
 }
 
 void icon_cache_clear(void) {
@@ -688,43 +686,6 @@ static bool app_icon_load(const item_t *it) {
     return true;
 }
 
-/* Icon colors, drawn as CEAShell draws them: an icon's pixel bytes are indices into the
- * calculator's own palette. FileR overwrites some of that palette (its icon art, its theme,
- * and the TI-BASIC colors), so each color an icon uses is copied from palette256 (the
- * palette as it was at startup) into a free slot, and its pixels are pointed at that slot.
- * Free slots skip the art (0-36), the theme (0x40-0x4A), and the transparent key (0xDF). If
- * an icon needs more colors than there are slots, the extra colors share the last one. */
-#define ICON_SLOT_MIN 0x25
-
-static bool icon_slot_free(int s) {
-    return (s >= 0x25 && s <= 0x3F) || (s >= 0x4B && s <= 0x7F) ||
-           (s >= 0x90 && s <= 0xDE) || (s >= 0xE0 && s <= 0xFF);
-}
-
-static void icon_use_os_colors(bool transparent) {
-    int i;
-    int cur = ICON_SLOT_MIN;
-    uint8_t last = ICON_SLOT_MIN;
-
-    memset(icon_map, 0, 256);
-    for (i = 0; i < ICON_PIXELS; i++) {
-        uint8_t raw = icon_sprite[2 + i];
-        if (transparent && raw == PRGM_TRANSPARENT) continue;
-        if (icon_map[raw] == 0) {
-            while (cur <= 0xFF && !icon_slot_free(cur)) cur++;
-            if (cur > 0xFF) {
-                icon_map[raw] = last;                       /* out of slots: share the last */
-            } else {
-                icon_map[raw] = (uint8_t)cur;
-                last = (uint8_t)cur;
-                gfx_SetPalette(&palette256[raw], sizeof(uint16_t), icon_map[raw]);
-                cur++;
-            }
-        }
-        icon_sprite[2 + i] = icon_map[raw];
-    }
-}
-
 void draw_row(int y, const item_t *it, const char *right, bool sel) {
     uint8_t bg = sel ? T_SEL : T_BG;
     uint8_t fg = sel ? T_SELTXT : T_TXT;
@@ -753,7 +714,6 @@ void draw_row(int y, const item_t *it, const char *right, bool sel) {
         gfx_RLETSprite(lock, LOCK_X, y + (ROW_H - lock_height) / 2);
     }
     if (it->kind == KIND_VAR && is_prgm_type(it->type) && cached_prgm_icon(it)) {
-        icon_use_os_colors(icon_transparent);
         if (icon_transparent) {
             gfx_SetTransparentColor(PRGM_TRANSPARENT);
             gfx_TransparentSprite((gfx_sprite_t *)icon_sprite, PRGM_ICON_X, y + (ROW_H - 16) / 2);
@@ -762,7 +722,6 @@ void draw_row(int y, const item_t *it, const char *right, bool sel) {
         }
     }
     if (it->kind == KIND_APP && app_icon_load(it)) {
-        icon_use_os_colors(false);
         gfx_Sprite((gfx_sprite_t *)icon_sprite, PRGM_ICON_X, y + (ROW_H - 16) / 2);
     }
     if (right) text_at(LABEL_X, ty, right, fg, bg);

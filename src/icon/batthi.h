@@ -9,7 +9,7 @@ extern "C" {
 #define batthi_height 18
 #define batthi_size 96
 #define batthi ((gfx_rletsprite_t*)batthi_data)
-extern const unsigned char batthi_data[96];
+extern unsigned char batthi_data[96];
 
 #ifdef __cplusplus
 }

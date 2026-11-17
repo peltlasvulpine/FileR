@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#include "mypalette.h"
+#include "xlibc.h"
 #define icons_palette_offset 0
 #include "alpha.h"
 #include "alphalock.h"

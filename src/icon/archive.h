@@ -9,7 +9,7 @@ extern "C" {
 #define archive_height 16
 #define archive_size 285
 #define archive ((gfx_rletsprite_t*)archive_data)
-extern const unsigned char archive_data[285];
+extern unsigned char archive_data[285];
 
 #ifdef __cplusplus
 }

@@ -90,12 +90,10 @@
 /* Right-side markers. They sit next to the type label and are never
  * drawn on top of the left icon. */
 
-/* Palette indices. The icon palette (mypalette) fills entries 0..13 and
- * leaves 0x00 black and 0xFF white as they are; 0x10 is the default blue. */
-/* Palette slots outside mypalette (it uses 0..36). They are set at startup
- * in restore_palette(). Using a slot inside mypalette would overwrite an icon color. */
-
-
+/* Palette indices. The icon palette is now convimg's built-in "xlibc" palette (xlibc.c),
+ * not the old custom mypalette, so the exact slot range the icons occupy is whatever
+ * convimg assigned them this build; check icon/xlibc.h if that range matters again.
+ * 0x00 stays black and 0xFF stays white; 0x10 is the default blue. */
 /* ---------- Types ---------- */
 
 enum location { LOC_CALC, LOC_PART, LOC_DRIVE };
@@ -240,7 +238,6 @@ void refresh_current(void);
 void rename_key(uint8_t key, char typed);
 void reset_usb_filters(void);
 void reset_view_position(void);
-void restore_palette(void);
 void set_status(const char *s);
 void settings_begin(void);
 void settings_close(bool save);
@@ -261,6 +258,7 @@ void text_at(int x, int y, const char *s, uint8_t fg, uint8_t bg);
 void text_clip(int x, int y, const char *s, uint8_t fg, uint8_t bg, int maxw);
 void theme_find_defaults(void);
 void theme_load(void);
+void theme_apply(void);
 void theme_snapshot(void);
 void toggle_usb_hidden(void);
 void send_to_calc(void);

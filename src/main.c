@@ -227,10 +227,10 @@ int main(void) {
     }
     STAGE(2);
     theme_load();
+    theme_apply();
     STAGE(3);
     viewer_set_overlay(draw_viewer_overlay);
     editor_set_overlay(draw_viewer_overlay);
-    restore_palette();
     gfx_SetDrawBuffer();
     STAGE(4);
 
@@ -264,10 +264,11 @@ int main(void) {
         }
         if (!msd_ready && gif_viewer_is_open()) {
             gif_viewer_close();
+            theme_apply();
         }
         if (!msd_ready && image_is_open()) {
             image_close();
-            restore_palette();
+            theme_apply();
             needs_redraw = true;
         }
         if (msd_ready != last_ready) {
@@ -331,12 +332,12 @@ int main(void) {
             needs_redraw = true;
         } else if (gif_viewer_is_open()) {
             if (gif_viewer_key(key)) {
-                restore_palette();
+                if (!gif_viewer_is_open()) theme_apply();
                 needs_redraw = true;
             }
         } else if (image_is_open()) {
             if (image_key(key)) {
-                restore_palette();
+                if (!image_is_open()) theme_apply();
                 needs_redraw = true;
             }
         } else if (viewer_is_open()) {

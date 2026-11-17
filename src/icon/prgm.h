@@ -9,7 +9,7 @@ extern "C" {
 #define prgm_height 18
 #define prgm_size 151
 #define prgm ((gfx_rletsprite_t*)prgm_data)
-extern const unsigned char prgm_data[151];
+extern unsigned char prgm_data[151];
 
 #ifdef __cplusplus
 }

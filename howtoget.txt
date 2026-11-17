@@ -1,0 +1,3 @@
+git diff main > diffs.txt
+
+for f in src/*.*; do   echo "===== Start of $f =====";   cat "$f";   echo -e "\n===== End of $f =====\n"; done > files.txt

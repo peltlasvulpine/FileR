@@ -9,7 +9,7 @@ extern "C" {
 #define html_height 18
 #define html_size 57
 #define html ((gfx_rletsprite_t*)html_data)
-extern const unsigned char html_data[57];
+extern unsigned char html_data[57];
 
 #ifdef __cplusplus
 }

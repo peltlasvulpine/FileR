@@ -9,7 +9,7 @@ extern "C" {
 #define dir_height 14
 #define dir_size 228
 #define dir ((gfx_rletsprite_t*)dir_data)
-extern const unsigned char dir_data[228];
+extern unsigned char dir_data[228];
 
 #ifdef __cplusplus
 }

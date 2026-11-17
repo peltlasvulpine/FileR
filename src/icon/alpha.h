@@ -9,7 +9,7 @@ extern "C" {
 #define alpha_height 18
 #define alpha_size 154
 #define alpha ((gfx_rletsprite_t*)alpha_data)
-extern const unsigned char alpha_data[154];
+extern unsigned char alpha_data[154];
 
 #ifdef __cplusplus
 }

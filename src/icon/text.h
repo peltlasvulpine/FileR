@@ -9,7 +9,7 @@ extern "C" {
 #define text_height 18
 #define text_size 80
 #define text ((gfx_rletsprite_t*)text_data)
-extern const unsigned char text_data[80];
+extern unsigned char text_data[80];
 
 #ifdef __cplusplus
 }

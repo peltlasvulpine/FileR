@@ -9,7 +9,7 @@ extern "C" {
 #define var_height 18
 #define var_size 103
 #define var ((gfx_rletsprite_t*)var_data)
-extern const unsigned char var_data[103];
+extern unsigned char var_data[103];
 
 #ifdef __cplusplus
 }

@@ -9,7 +9,7 @@ extern "C" {
 #define alphalock_height 18
 #define alphalock_size 148
 #define alphalock ((gfx_rletsprite_t*)alphalock_data)
-extern const unsigned char alphalock_data[148];
+extern unsigned char alphalock_data[148];
 
 #ifdef __cplusplus
 }
