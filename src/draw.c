@@ -895,7 +895,9 @@ bool selected_description(char *out) {
     return true;
 }
 
-void draw(void) {
+/* Draws the whole screen into the current draw target, without showing it. The title
+ * intro uses this to render the screen ahead of time. */
+void draw_body(void) {
     char line[64];
     char path[PATH_MAX + 8];
     int i;
@@ -906,13 +908,15 @@ void draw(void) {
     /* Title bar: top-bar text on top-bar color */
     gfx_SetColor(T_TOP);
     gfx_FillRectangle(0, 0, SCREEN_W, TITLE_H);
+    /* Folder icon at (2,2), then the name. The name is "FileR", or the selected item's
+     * description. The name starts at x 22 (after the icon) and stops short of the
+     * indicators at the right of the title bar. */
+    gfx_RLETSprite(dirfilled, 2, 2);
     {
         char desc[DESC_MAX + 1];
-        const char *label = location == LOC_CALC ? "Calculator" :
-                            location == LOC_PART ? "Partitions" : "USB Drive";
+        const char *label = "FileR";
         if (selected_description(desc)) label = desc;
-        /* Stops short of the indicators at the right of the title bar. */
-        text_clip(6, 6, label, T_TOPTXT, T_TOP, SCREEN_W - 12 - 70);
+        text_clip(22, 6, label, T_TOPTXT, T_TOP, SCREEN_W - 82 - 22);
     }
     draw_indicators();
 
@@ -974,7 +978,10 @@ void draw(void) {
     if (filter_open) draw_filter();
     }
     if (settings_open) draw_settings();
+}
 
+void draw(void) {
+    draw_body();
     gfx_SwapDraw();
 }
 

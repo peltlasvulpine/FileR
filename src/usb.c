@@ -1,4 +1,5 @@
 #include "filer.h"
+#include "safe_arc.h"
 
 /* ---------- FAT callbacks ---------- */
 
@@ -617,6 +618,18 @@ void xfer_cancel(void) {
     set_status("Transfer cancelled");
 }
 
+/* The whole send, run from the clean screen when it would need a garbage-collect prompt
+ * (see safe_arc.c, ported from CEAShell). The overwrite question was already answered. */
+struct send_args {
+    const char *path;
+};
+
+static int send_op(void *p) {
+    struct send_args *a = (struct send_args *)p;
+    send_file_to_calc(a->path, true);
+    return 0;
+}
+
 /* Sends the TI file at path to the calculator as a program or AppVar. The header
  * layout (from cesium's tiformat.inc): type byte at 59, name at 60-67, archive flag at
  * 69 (0x80 = archived), entry length at 70-71, the variable's size word at 72-73, data
@@ -673,6 +686,13 @@ static void send_file_to_calc(const char *path, bool confirmed) {
             status_timed = false;
             return;
         }
+    }
+
+    if (!safe_var_fits(size, archived)) {
+        struct send_args a = { path };
+        fat_CloseFile(&in);
+        safe_run_or_relaunch(send_op, &a);   /* returns only if FileR could not relaunch */
+        return;
     }
 
     h = ti_OpenVar(vname, "w", type);

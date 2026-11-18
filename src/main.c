@@ -1,4 +1,5 @@
 #include "filer.h"
+#include "intro.h"
 
 /* ---------- Input ---------- */
 
@@ -240,6 +241,7 @@ int main(void) {
     STAGE(6);
     calc_refresh();
     STAGE(7);
+    intro_run();               /* after the lists are loaded, so the screen can be drawn ahead of time */
 
     while (!quit) {
         /* Dispatch pending USB events so connect/enable callbacks run. */

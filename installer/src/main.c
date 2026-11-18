@@ -273,13 +273,10 @@ int main(int argc, char **argv)
     switch (error)
     {
         case SUCCESS:
-            os_PutStrFull("Successfully installed.");
-            os_NewLine();
-            os_PutStrFull("App: ");
-            os_PutStrFull(app_name);
+            os_PutStrFull("FileR's now installed!");
             os_NewLine();
             os_NewLine();
-            os_PutStrFull("Delete installer files?");
+            os_PutStrFull("Delete leftover files?");
             if (confirm_delete_vars())
             {
                 delete_var(argv[0], OS_TYPE_PROT_PRGM);
@@ -289,10 +286,7 @@ int main(int argc, char **argv)
             break;
 
         case ALREADY_INSTALLED:
-            os_PutStrFull("Already installed.");
-            os_NewLine();
-            os_PutStrFull("App: ");
-            os_PutStrFull(app_name);
+            os_PutStrFull("Already installed...");
             os_NewLine();
             os_NewLine();
             os_PutStrFull("Delete app from the");
@@ -301,25 +295,38 @@ int main(int argc, char **argv)
             break;
 
         case MISSING_VAR:
-            os_PutStrFull("Install failed.");
+            os_PutStrFull("Install failed :C");
             os_NewLine();
-            os_PutStrFull("Missing an appvar.");
+            os_NewLine();
+            os_PutStrFull("Missing an AppVar,");
+            os_NewLine();
+            os_PutStrFull("are all AppVars");
+            os_NewLine();
+            os_PutStrFull("transferred?");
             break;
 
         case PORT_SETUP_FAILED:
-            os_PutStrFull("Install failed.");
+            os_PutStrFull("Install failed :C");
             os_NewLine();
-            os_PutStrFull("Unsupported OS version.");
+            os_NewLine();
+            os_PutStrFull("Unsupported OS ver,");
+            os_NewLine();
+            os_PutStrFull("Check in the About");
+            os_NewLine();
+            os_PutStrFull("page of your");
+            os_NewLine();
+            os_PutStrFull("calculator");
             break;
 
         case NO_SPACE:
-            os_PutStrFull("Install failed.");
+            os_PutStrFull("Install failed :C");
             os_NewLine();
-            os_PutStrFull("Out of archive space.");
             os_NewLine();
-            os_PutStrFull("Try running the");
+            os_PutStrFull("Out of arch, run");
             os_NewLine();
-            os_PutStrFull("GarbageCollect command.");
+            os_PutStrFull("GarbageCollect or");
+            os_NewLine();
+            os_PutStrFull("delete unused programs");
             break;
     }
 

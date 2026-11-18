@@ -1,4 +1,5 @@
 #include "filer.h"
+#include "safe_arc.h"
 
 /* ---------- Delete ---------- */
 
@@ -448,11 +449,37 @@ static int copy_rename_var(const char *old_name, const char *new_name, uint8_t t
     return 0;
 }
 
+struct rename_args {
+    const char *old_name;
+    const char *new_name;
+    uint8_t type;
+    bool hidden;
+};
+
+static int rename_op(void *p) {
+    struct rename_args *a = (struct rename_args *)p;
+    return copy_rename_var(a->old_name, a->new_name, a->type, a->hidden);
+}
+
 /* Runs copy_rename_var under the OS error handler, so an OS error comes back as a return
- * value instead of a reset. An OS error number is returned as is. */
+ * value instead of a reset. An OS error number is returned as is. If the copy would need a
+ * garbage-collect prompt, it runs from a clean screen instead (safe_arc.c, ported from
+ * CEAShell's renameOnGC path). */
 static int safe_var_rename(const char *old_name, const char *new_name, uint8_t type, bool hidden) {
     int err;
     int r;
+    uint8_t h;
+    uint32_t size = 0;
+    bool archived = false;
+    struct rename_args args = { old_name, new_name, type, hidden };
+
+    h = ti_OpenVar(old_name, "r", type);
+    if (h) {
+        size = ti_GetSize(h);
+        archived = ti_IsArchived(h) != 0;
+        ti_Close(h);
+    }
+    if (!safe_var_fits(size, archived)) return safe_run_or_relaunch(rename_op, &args);
 
     err = os_PushErrorHandler();
     if (err) return err;

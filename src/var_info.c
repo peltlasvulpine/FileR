@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "fmt.h"
+#include "safe_arc.h"
 #include "var_info.h"
 
 /* Theme palette slots, the same numbers as main.c, so the panel follows the
@@ -189,9 +190,16 @@ static bool set_lock(bool lock) {
     return ok;
 }
 
-/* Moves the variable into (want true) or out of the archive, and records the result. */
+/* Moves the variable into (want true) or out of the archive, and records the result.
+ * Archiving goes through safe_set_archived, ported from CEAShell, so a garbage-collect
+ * prompt is shown from a clean screen. Unarchiving still calls the OS directly. */
 static void set_archived(bool want) {
-    uint8_t h = ti_OpenVar(vname, "r", vtype);
+    uint8_t h;
+    if (want) {
+        if (safe_set_archived(vname, vtype, true)) varchived = true;
+        return;
+    }
+    h = ti_OpenVar(vname, "r", vtype);
     if (!h) return;
     if (ti_SetArchiveStatus(want, h)) varchived = want;
     ti_Close(h);

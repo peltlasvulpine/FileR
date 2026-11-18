@@ -193,6 +193,7 @@ void close_menu(void);
 void confirm_delete(void);
 void copy_marked(void);
 void draw(void);
+void draw_body(void);
 void draw_battery(void);
 void draw_file_with_overlay(uint8_t overlay, int y);
 void draw_filter(void);
