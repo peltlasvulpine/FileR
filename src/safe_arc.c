@@ -28,7 +28,7 @@ static volatile uint32_t app_last;
 static volatile uint8_t  app_end;
 static volatile uint32_t relaunch_addr;
 
-/* ---- finding our own app in flash (copied from FileRExec/main.c) ---- */
+/* ---- finding the app in flash (copied from FileRExec/main.c) ---- */
 
 static void app_search_start(void) {
     asm("push af\n"
@@ -68,7 +68,7 @@ static void app_search_next(void) {
         "pop af\n");
 }
 
-/* Our own app's base address in flash, or 0 if it is not found. */
+/* The app's base address in flash, or 0 if it is not found. */
 static uint32_t find_self(void) {
     int tries;
 
@@ -175,7 +175,7 @@ static void relaunch_app(void) {
         "pop de\n"
         "ex (sp), hl\n"
         "push de\n"
-        "ld sp, ($0D007FA)\n"         /* ti.onSP: discard our old stack, use the OS baseline */
+        "ld sp, ($0D007FA)\n"         /* ti.onSP: discard the app's old stack, use the OS baseline */
         "push hl\n"
         "call $002103C\n"             /* ti.ResetStacks */
         "pop hl\n"
@@ -279,6 +279,63 @@ int safe_run_or_relaunch(safe_op_fn op, void *ctx) {
     return r;
 }
 
+/* True if addr is FileR's own app header, which must not be deleted. */
+bool app_is_self(uint32_t addr) {
+    return addr != 0 && addr == find_self();
+}
+
+/* ---- deleting an app (ported from CEAShell's _asm_apps_deleteApp and _asm_apps_exitDefrag) ---- */
+
+static volatile uint32_t delete_addr;
+
+/* Deletes the installed app at addr with the OS. The flash is only cleaned up when FileR
+ * exits (app_exit_defrag), as CEAShell does. The caller must not pass FileR's own address. */
+bool delete_app(uint32_t addr) {
+    if (addr == 0 || app_is_self(addr)) return false;
+    delete_addr = addr;
+    asm("push af\n"
+        "push bc\n"
+        "push de\n"
+        "push hl\n"
+        "push ix\n"
+        "push iy\n"
+        "ld iy, $D00080\n"        /* ti.flags, which DeleteApp and the flag below expect */
+        "ld hl, (_delete_addr)\n"
+        "call $002126C\n"         /* ti.DeleteApp */
+        "ld iy, $D00080\n"
+        "set 3, (iy+$25)\n"       /* defrag needed when FileR exits */
+        "pop iy\n"
+        "pop ix\n"
+        "pop hl\n"
+        "pop de\n"
+        "pop bc\n"
+        "pop af\n");
+    return true;
+}
+
+/* At FileR's exit: if an app was deleted, the OS defragments the flash now. Does not return
+ * when it runs. Call it after gfx_End, the same place CEAShell calls it. */
+void app_exit_defrag(void) {
+    asm("ld iy, $D00080\n"        /* ti.flags */
+        "bit 3, (iy+$25)\n"
+        "jr z, 1f\n"
+        "ld a, $4D\n"             /* ti.cxErase */
+        "jp $0020170\n"           /* ti.NewContext0 */
+        "1:\n");
+}
+
+/* Starts the installed app whose header is at addr (an Applications list row). FileR shuts
+ * down as a relaunch does, since the OS takes over the screen. Does not return when the app
+ * starts; it returns only if the app could not be started. */
+bool run_app(uint32_t addr) {
+    if (addr == 0) return false;
+    cache_shutdown();                   /* deletes FileR's cache; the app is a new run */
+    gfx_End();                          /* CEAShell's files.c ends graphics before executeApp */
+    relaunch_addr = addr;
+    relaunch_app();                     /* never returns on success */
+    return false;
+}
+
 /* Archives the variable, from the clean screen if needed. */
 struct arc_args {
     const char *name;
@@ -293,16 +350,36 @@ static int archive_op(void *p) {
     return ok;
 }
 
+static int unarchive_op(void *p) {
+    struct arc_args *a = (struct arc_args *)p;
+    uint8_t h = ti_OpenVar(a->name, "r", a->type);
+    int ok = 0;
+    if (h) { ok = ti_SetArchiveStatus(false, h) ? 1 : 0; ti_Close(h); }
+    return ok;
+}
+
 bool safe_set_archived(const char *name, uint8_t type, bool to_arc) {
     uint8_t h;
     uint32_t size;
     bool ok = false;
 
     if (!to_arc) {
-        /* Unarchiving needs RAM, not archive space. Not handled here yet. */
+        /* Unarchiving needs RAM for the variable, so it gets the same check as archiving:
+         * if RAM is short, it runs from a clean screen instead. */
         h = ti_OpenVar(name, "r", type);
-        if (h) { ok = ti_SetArchiveStatus(false, h); ti_Close(h); }
-        return ok;
+        if (!h) return false;
+        size = ti_GetSize(h);
+        ti_Close(h);
+
+        if (safe_var_fits(size, false)) {
+            h = ti_OpenVar(name, "r", type);
+            if (h) { ok = ti_SetArchiveStatus(false, h); ti_Close(h); }
+            return ok;
+        }
+        {
+            struct arc_args a = { name, type };
+            return safe_run_or_relaunch(unarchive_op, &a) != 0;
+        }
     }
 
     h = ti_OpenVar(name, "r", type);

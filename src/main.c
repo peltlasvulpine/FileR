@@ -1,5 +1,6 @@
 #include "filer.h"
 #include "intro.h"
+#include "safe_arc.h"
 
 /* ---------- Input ---------- */
 
@@ -554,6 +555,7 @@ int main(void) {
     usb_Cleanup();
     cache_shutdown();          /* deletes FRCACHE and FRSWAP: a clean exit */
     gfx_End();
+    app_exit_defrag();         /* only does something if an app was deleted this run */
     return 0;
 }
 

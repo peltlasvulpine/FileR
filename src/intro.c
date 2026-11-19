@@ -15,7 +15,10 @@
  *
  * Steps 1 to 4 draw into the back buffer and swap it onto the screen. Step 5 copies the
  * pre-drawn screen onto the visible screen, so nothing is stored between frames except the
- * pre-drawn screen itself, which lives in the graphics back buffer. */
+ * pre-drawn screen itself, which lives in the graphics back buffer.
+ *
+ * The timing comes from the Intro settings (intro_fps, intro_pause, intro_in, intro_out in
+ * filer.h). The durations below are worked out in frames when the intro starts. */
 
 #include <tice.h>
 #include <graphx.h>
@@ -30,13 +33,6 @@
 #define NLETTERS    5
 
 #define BIG         3          /* title text scale at the start (1 is normal size) */
-#define STAGGER     4          /* frames between one letter starting to fly and the next */
-#define TRAVEL      16         /* frames one letter takes to fly in */
-#define RISE        12         /* frames the subtitle takes to come up */
-#define HOLD        33         /* frames both stay still (33 x 30 ms, about the old 1 second) */
-#define OUT         12         /* frames the subtitle takes to fly out, and the icon to fly in */
-#define SHRINK      30         /* frames the title takes to move up and the bar to shrink */
-#define FRAME_MS    30         /* delay between frames */
 #define STRIP_W     24         /* hiding strip down the left edge, 24 px wide */
 
 #define ENTRY_X     (SCREEN_W - 1)  /* letters start at the right edge */
@@ -47,16 +43,49 @@
 #define TBAR_ICON_X 2          /* folder icon at its normal spot */
 #define TBAR_ICON_Y 2
 
+/* Frame counts, set by intro_timing(). */
+static int trav;        /* frames one letter takes to fly in (the in time) */
+static int stagger;     /* frames between one letter starting and the next */
+static int rise;        /* frames the subtitle takes to come up */
+static int hold;        /* frames everything stays still (the pause) */
+static int outf;        /* frames the subtitle takes to fly out, and the icon to fly in (the out time) */
+static int shrinkf;     /* frames the title and the top bar take to shrink */
 /* Frame where each part ends. */
-#define END_FLY     ((NLETTERS - 1) * STAGGER + TRAVEL)
-#define END_RISE    (END_FLY + RISE)
-#define END_HOLD    (END_RISE + HOLD)
-#define END_OUT     (END_HOLD + OUT)
-#define END_SHRINK  (END_OUT + SHRINK)
+static int end_fly, end_rise, end_hold, end_out, end_shrink;
 
 static int land_x[NLETTERS];   /* where each letter stops at the big size, centered */
 static int title_x0;           /* left edge of the whole word at the big size */
 static bool ui_ready = false;  /* the screen has been drawn ahead of time into the buffer */
+
+/* Turns the Intro settings into frame counts. Tenths of a second times frames a second
+ * gives frames; each part is at least one frame, except the pause, which may be none. */
+static void intro_timing(void) {
+    long fps = intro_fps;
+
+    trav = (int)((long)intro_in * fps / 10);
+    if (trav < 1) trav = 1;
+    stagger = trav / 4;
+    if (stagger < 1) stagger = 1;
+    rise = trav * 3 / 4;
+    if (rise < 1) rise = 1;
+    hold = (int)((long)intro_pause * fps / 10);
+    outf = (int)((long)intro_out * fps / 10);
+    if (outf < 1) outf = 1;
+    shrinkf = outf * 5 / 2;          /* the shrink is 2.5 times the out time */
+    if (shrinkf < 2) shrinkf = 2;
+
+    end_fly = (NLETTERS - 1) * stagger + trav;
+    end_rise = end_fly + rise;
+    end_hold = end_rise + hold;
+    end_out = end_hold + outf;
+    end_shrink = end_out + shrinkf;
+}
+
+/* dist * (u / L) squared, the ease-out used for every move here: fast at first, slowing
+ * into the spot. u and L are frames. Done in long so the longer settings can't overflow. */
+static int ease(int dist, int u, int L) {
+    return (int)((long)dist * u * u / ((long)L * L));
+}
 
 /* Draws one character at (x,y) at the given scale, on the given background. */
 static void draw_char(char c, int x, int y, uint8_t scale, uint8_t fg, uint8_t bg) {
@@ -80,28 +109,28 @@ static void draw_word(int x, int y, uint8_t scale, uint8_t fg, uint8_t bg) {
 /* x of letter i on frame f, or -1 if it has not started yet. Each letter starts at the
  * right edge and eases to its landing spot, so it slows as it arrives. */
 static int letter_x(int i, int f) {
-    int t = f - i * STAGGER;
+    int t = f - i * stagger;
     int u;
 
     if (t < 0) return -1;
-    if (t >= TRAVEL) return land_x[i];
-    u = TRAVEL - t;                                   /* distance left, in frames */
-    return land_x[i] + (ENTRY_X - land_x[i]) * u * u / (TRAVEL * TRAVEL);
+    if (t >= trav) return land_x[i];
+    u = trav - t;                                     /* distance left, in frames */
+    return land_x[i] + ease(ENTRY_X - land_x[i], u, trav);
 }
 
 /* y of the subtitle on frame f, or -1 if it is not on screen. */
 static int sub_y(int f) {
     int p;
 
-    if (f < END_FLY) return -1;
-    if (f < END_RISE) {                               /* rises, easing out */
-        int u = END_RISE - f;
-        return SUB_Y + (SCREEN_H - SUB_Y) * u * u / (RISE * RISE);
+    if (f < end_fly) return -1;
+    if (f < end_rise) {                               /* rises, easing out */
+        int u = end_rise - f;
+        return SUB_Y + ease(SCREEN_H - SUB_Y, u, rise);
     }
-    if (f < END_HOLD) return SUB_Y;
-    if (f < END_OUT) {                                /* flies out, speeding up */
-        p = f - END_HOLD;
-        return SUB_Y + (SCREEN_H - SUB_Y) * p * p / (OUT * OUT);
+    if (f < end_hold) return SUB_Y;
+    if (f < end_out) {                                /* flies out, speeding up */
+        p = f - end_hold;
+        return SUB_Y + ease(SCREEN_H - SUB_Y, p, outf);
     }
     return -1;
 }
@@ -111,15 +140,16 @@ static int sub_y(int f) {
 static int icon_x(int f) {
     int v;
 
-    if (f < END_HOLD) return -1;
-    if (f >= END_OUT) return TBAR_ICON_X;
-    v = END_OUT - f;                                  /* frames left in the fly-in */
-    return TBAR_ICON_X + (SCREEN_W - TBAR_ICON_X) * v * v / (OUT * OUT);
+    if (f < end_hold) return -1;
+    if (f >= end_out) return TBAR_ICON_X;
+    v = end_out - f;                                  /* frames left in the fly-in */
+    return TBAR_ICON_X + ease(SCREEN_W - TBAR_ICON_X, v, outf);
 }
 
 /* Draws the normal screen into the back buffer, out of sight, so step 5 can use it. */
 static void render_ui(void) {
     gfx_SetDrawBuffer();
+    gfx_SetTextScale(1, 1);   /* the last intro frame may have left the title's big scale set */
     draw_body();
     ui_ready = true;
 }
@@ -130,7 +160,7 @@ static void draw_frame(int f) {
     int x;
     int y;
 
-    if (f < END_OUT) {
+    if (f < end_out) {
         /* Steps 1 to 4: the top-bar colour is the background. */
         gfx_SetDrawBuffer();
         gfx_FillScreen(T_TOP);
@@ -151,7 +181,7 @@ static void draw_frame(int f) {
         /* Hiding strip down the left edge, the top-bar colour. It is drawn last so it covers
          * text that wraps over from the right edge, and it goes away when the title's fly-in
          * ends. */
-        if (f < END_FLY) {
+        if (f < end_fly) {
             gfx_SetColor(T_TOP);
             gfx_FillRectangle(0, 0, STRIP_W, SCREEN_H);
         }
@@ -160,20 +190,22 @@ static void draw_frame(int f) {
         /* Step 5: the title moves to its normal spot, the scale steps down 3 -> 2 -> 1, and
          * the top bar shrinks from the bottom up to its normal height (easing out). The rest
          * of the pre-drawn screen rides up under the bar. */
-        int s = f - END_OUT;                          /* 0 .. SHRINK-1 */
-        int L = SHRINK - 1;
+        int s = f - end_out;                          /* 0 .. shrinkf-1 */
+        int L = shrinkf - 1;
         int u = L - s;                                /* frames left in the shrink */
-        int h = TITLE_H + (SCREEN_H - TITLE_H) * u * u / (L * L);  /* bar height */
-        uint8_t scale = s < SHRINK / 3 ? 3 : (s < 2 * SHRINK / 3 ? 2 : 1);
+        int h = TITLE_H + ease(SCREEN_H - TITLE_H, u, L) - ease(9, u, L);  /* bar height */
+        uint8_t scale = s < shrinkf / 3 ? 3 : (s < 2 * shrinkf / 3 ? 2 : 1);
         /* Same ease-out as the bar: fast at first, slowing into the spot. */
-        int ax = FINAL_X + (title_x0 - FINAL_X) * u * u / (L * L);
-        int ay = FINAL_Y + (TITLE_Y - FINAL_Y) * u * u / (L * L);
+        int ax = FINAL_X + ease(title_x0 - FINAL_X, u, L);
+        int ay = FINAL_Y + ease(TITLE_Y - FINAL_Y, u, L);
 
         if (!ui_ready) render_ui();
 
         /* Body of the pre-drawn screen (everything below its own title bar), moved so its
-         * top edge sits at the bottom of our bar. Its own title bar is not copied. */
+         * top edge sits at the bottom of the top bar. Its own title bar is not copied. */
         gfx_SetDrawScreen();
+        /* Rows 0 to TITLE_H-1 of the pre-drawn screen are its own title bar, so the copy starts
+         * at row TITLE_H, just below it. */
         gfx_CopyRectangle(gfx_buffer, gfx_screen, 0, TITLE_H, 0, h, SCREEN_W, SCREEN_H - h);
 
         gfx_SetColor(T_TOP);
@@ -188,8 +220,10 @@ static void draw_frame(int f) {
 void intro_run(void) {
     int f;
     int i;
+    int fps = intro_fps;
     bool armed = false;     /* true once the key that started FileR has been let go */
 
+    intro_timing();
     ui_ready = false;
 
     /* Work out where the big title lands: the word is centered, and each letter sits after
@@ -205,16 +239,16 @@ void intro_run(void) {
         }
     }
 
-    for (f = 0; f < END_SHRINK; f++) {
+    for (f = 0; f < end_shrink; f++) {
         if (!kb_AnyKey()) armed = true;
         if (armed && kb_AnyKey()) break;
         draw_frame(f);
-        delay(FRAME_MS);
+        delay(1000 / fps);
     }
 
     /* Leave the screen in its final state, whether the intro ran out or was skipped. The
      * main loop draws its own top bar next. */
-    draw_frame(END_SHRINK - 1);
+    draw_frame(end_shrink - 1);
     gfx_SetTextScale(1, 1);
     gfx_SetDrawBuffer();
     while (kb_AnyKey()) {}  /* let go of a skip key before the menu reads the keyboard */

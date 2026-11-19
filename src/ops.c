@@ -133,6 +133,7 @@ void zoom_delete(void) {
     }
     strcpy(pending_path, path);
     pending_is_dir = is_dir;
+    pending_app = false;
     pending_delete = true;
     fmt(msg, "Delete %s?", name);
     set_status(msg);
@@ -147,6 +148,23 @@ void calc_delete_prompt(void) {
 
     if (location != LOC_CALC || item_count == 0) return;
     it = &items[selected];
+    if (it->kind == KIND_APP) {
+        /* An installed app: FileR can't delete its own app. The flash is cleaned up at exit. */
+        if (app_is_self(it->app_addr)) {
+            set_status("FileR can't delete itself");
+            return;
+        }
+        strncpy(pending_var, it->shown, sizeof(pending_var) - 1);
+        pending_var[sizeof(pending_var) - 1] = 0;
+        pending_app_addr = it->app_addr;
+        pending_app = true;
+        pending_calc = false;
+        pending_delete = true;
+        fmt(msg, "Delete app %s?", pending_var);
+        set_status(msg);
+        status_timed = false;  /* stays until Y= or Graph answers it */
+        return;
+    }
     if (it->kind != KIND_VAR) {
         set_status("Select a variable");
         return;
@@ -159,11 +177,23 @@ void calc_delete_prompt(void) {
     strncpy(pending_var, it->name, sizeof(pending_var) - 1);
     pending_var[sizeof(pending_var) - 1] = 0;
     pending_var_type = it->type;
+    pending_app = false;
     pending_calc = true;
     pending_delete = true;
     fmt(msg, "Delete %s?", pending_var);
     set_status(msg);
     status_timed = false;      /* stays until Y= or Graph answers it */
+}
+
+/* Deletes the installed app waiting in pending_app_addr. */
+static void perform_app_delete(void) {
+    if (!delete_app(pending_app_addr)) {
+        set_status("Delete failed");
+        return;
+    }
+    set_status("Deleted app (flash is cleaned up when FileR closes)");
+    calc_refresh();
+    clamp_selection();
 }
 
 /* Deletes the calculator variable waiting in pending_var. The calculator refuses
@@ -186,6 +216,11 @@ void perform_calc_delete(void) {
 /* Y= while a delete is waiting: delete it. */
 void confirm_delete(void) {
     pending_delete = false;
+    if (pending_app) {
+        pending_app = false;
+        perform_app_delete();
+        return;
+    }
     if (pending_calc) {
         pending_calc = false;
         perform_calc_delete();
@@ -198,6 +233,7 @@ void confirm_delete(void) {
 void cancel_delete(void) {
     pending_delete = false;
     pending_calc = false;
+    pending_app = false;
     set_status("Delete cancelled");
 }
 
@@ -698,7 +734,7 @@ void activate_selected(void) {
             break;   /* the info panel opens with Window */
 
         case KIND_APP:
-            set_status("Apps can't be opened");   /* read-only: nothing to open */
+            if (!run_app(it->app_addr)) set_status("Could not open the app");
             break;
     }
     needs_redraw = true;

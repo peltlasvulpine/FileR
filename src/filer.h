@@ -27,6 +27,10 @@
 #include <time.h>          /* clock(): status message timeouts */
 #include <stdlib.h>        /* malloc/free: folder listings during a folder copy */
 
+#define APP_VER_MAJ   1
+#define APP_VER_MIN   1
+#define APP_VER_PTCH  0
+
 #define SCREEN_W      320
 #define SCREEN_H      240
 #define TITLE_H       20
@@ -82,6 +86,30 @@
 #define THEME_MAGIC 0x47   /* 'G': palette indices. Older 'F' saves are ignored. */
 #define REPEAT_DELAY_MS 400
 #define REPEAT_MS       90
+
+/* Settings: the Mode menu's pages, and the Intro settings. The Intro numbers are saved in
+ * FILERCFG after the palette: one byte each, with the units below. */
+#define SET_MENU   0
+#define SET_COLORS 1
+#define SET_INTRO  2
+#define SET_ABOUT  3
+#define INTRO_SAVE_LEN 5
+#define INTRO_AT       (1 + THEME_ROLES)     /* byte 0 is the magic, then the palette */
+#define THEME_SAVE_LEN (INTRO_AT + INTRO_SAVE_LEN)
+#define INTRO_FPS_MIN   10                   /* frames a second */
+#define INTRO_FPS_MAX   60
+#define INTRO_FPS_DEF   60
+#define INTRO_PAUSE_MAX 50                   /* tenths of a second */
+#define INTRO_PAUSE_DEF 1
+#define INTRO_TIME_MIN  1                    /* tenths of a second, for the in and out times */
+#define INTRO_TIME_MAX  30
+#define INTRO_IN_DEF    5
+#define INTRO_OUT_DEF   4
+
+/* Settings box: rows in each page, and the box's height in pixels (title, rows, margins). */
+#define SETTINGS_MENU_ROWS  3                /* Intro settings, Color settings, About */
+#define SETTINGS_INTRO_ROWS 6                /* on/off, play now, frame rate, pause, in, out */
+#define SETTINGS_BOX_H      (20 + SETTINGS_VISIBLE * 18 + 30)
 
 
 /* ---------- Layout ---------- */
@@ -306,6 +334,14 @@ extern bool search_mode;
 extern bool settings_fast;
 extern bool settings_open;
 extern bool settings_typing;
+extern uint8_t settings_page;            /* SET_MENU, SET_COLORS, SET_INTRO or SET_ABOUT */
+extern uint8_t settings_menu_sel;
+extern bool intro_on;                    /* play the intro at startup */
+extern bool intro_preview;               /* set by "Play intro now"; the main loop plays it */
+extern uint8_t intro_fps;                /* intro frames a second (INTRO_FPS_MIN..MAX) */
+extern uint8_t intro_pause;              /* tenths of a second the intro holds still */
+extern uint8_t intro_in;                 /* tenths of a second for the letters to fly in */
+extern uint8_t intro_out;                /* tenths of a second for the subtitle to fly out */
 extern bool status_changed;
 extern bool status_timed;
 extern bool type_forced;
@@ -357,6 +393,8 @@ extern uint8_t filter_sel;
 extern uint8_t hidden_filter;
 extern uint8_t icon_sprite[2 + ICON_PIXELS];
 extern uint8_t pending_var_type;
+extern bool pending_app;
+extern uint32_t pending_app_addr;
 extern uint8_t settings_num;
 extern uint8_t settings_sel;
 extern uint8_t settings_top;

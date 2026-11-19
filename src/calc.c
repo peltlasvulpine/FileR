@@ -422,8 +422,8 @@ static void app_search_next(void) {
 }
 
 /* Adds one row per installed app. The name is in the app's header, 0x103 bytes past
- * its address (CEAShell's getAppName). Apps are read-only: no hide, lock, rename,
- * archive or delete. */
+ * its address (CEAShell's getAppName). Enter opens an app and Del deletes it. Apps can't be
+ * hidden, locked, renamed or archived. */
 static void add_app_items(void) {
     int tries = 0;
 

@@ -24,4 +24,18 @@ bool safe_var_fits(uint32_t size, bool archived);
  * runs op here and returns its result. Use it only when safe_var_fits said no. */
 int safe_run_or_relaunch(safe_op_fn op, void *ctx);
 
+/* Starts the installed app at addr (its flash header address, from the Applications list).
+ * Does not return when the app starts. Returns false only if it could not be started. */
+bool run_app(uint32_t addr);
+
+/* True if addr is FileR's own app header. */
+bool app_is_self(uint32_t addr);
+
+/* Deletes the installed app at addr. Refuses FileR itself. The flash is cleaned up when FileR
+ * exits, through app_exit_defrag. Returns false if nothing was deleted. */
+bool delete_app(uint32_t addr);
+
+/* Runs the flash defrag that a deleted app needs, when FileR exits. Call after gfx_End. */
+void app_exit_defrag(void);
+
 #endif

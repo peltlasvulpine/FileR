@@ -41,6 +41,8 @@ bool pending_delete = false;        /* a delete is waiting for Y= (yes) or Graph
 bool pending_calc = false;          /* the waiting delete is a calculator variable */
 char pending_var[9];                /* its name */
 uint8_t pending_var_type;           /* its OS type */
+bool pending_app = false;           /* the waiting delete is an installed app (pending_calc is false) */
+uint32_t pending_app_addr;          /* its flash header address */
 bool pending_is_dir = false;        /* what that delete would remove */
 char *pending_path;   /* what that Zoom would delete */
 lfn_list_t lfn_list;                /* long-name entries of the file being deleted */

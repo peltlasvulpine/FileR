@@ -149,10 +149,7 @@ static bool toggle_hidden(void) {
     uint8_t c;
     bool was_arch = varchived;
 
-    if (was_arch) {
-        h = ti_OpenVar(vname, "r", vtype);
-        if (h) { ti_SetArchiveStatus(false, h); ti_Close(h); }
-    }
+    if (was_arch) safe_set_archived(vname, vtype, false);   /* unarchive, with the RAM safeguard */
     if (!os_ChkFindSym(vtype, vname, &entry, &data) || !entry) {
         if (was_arch) {
             h = ti_OpenVar(vname, "r", vtype);
@@ -191,18 +188,10 @@ static bool set_lock(bool lock) {
 }
 
 /* Moves the variable into (want true) or out of the archive, and records the result.
- * Archiving goes through safe_set_archived, ported from CEAShell, so a garbage-collect
- * prompt is shown from a clean screen. Unarchiving still calls the OS directly. */
+ * Both directions go through safe_set_archived, ported from CEAShell, so a garbage-collect
+ * prompt is shown from a clean screen. */
 static void set_archived(bool want) {
-    uint8_t h;
-    if (want) {
-        if (safe_set_archived(vname, vtype, true)) varchived = true;
-        return;
-    }
-    h = ti_OpenVar(vname, "r", vtype);
-    if (!h) return;
-    if (ti_SetArchiveStatus(want, h)) varchived = want;
-    ti_Close(h);
+    if (safe_set_archived(vname, vtype, want)) varchived = want;
 }
 
 /* Applies the pending choices. Hide and lock first, while the variable is out of the
