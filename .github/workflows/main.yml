@@ -1,0 +1,76 @@
+
+name: FileR Nightly Build
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: filer-nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zip
+
+      - name: Install CEdev
+        run: |
+          curl -L \
+            https://github.com/CE-Programming/toolchain/releases/latest/download/CEdev-Linux.tar.gz \
+            -o CEdev-Linux.tar.gz
+
+          tar -xzf CEdev-Linux.tar.gz -C "$HOME"
+
+          echo "$HOME/CEdev/bin" >> "$GITHUB_PATH"
+
+      - name: Build FileR
+        run: |
+          make -j2 install-kit CONVBIN=convbin
+
+      - name: Package FileR
+        run: |
+          mkdir -p dist
+
+          # Copy generated calculator files
+          cp -a bin/. dist/
+
+          # Include clibs from repository root
+          cp -a clibs dist/clibs
+
+          # Create the ZIP archive
+          cd dist
+          zip -r ../FileR.zip .
+
+      - name: Update nightly tag
+        run: |
+          git tag -f nightly "$GITHUB_SHA"
+          git push origin refs/tags/nightly --force
+
+      - name: Publish FileR nightly
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: FileR nightly
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          make_latest: false
+          files: FileR.zip
+          overwrite_files: true
+          fail_on_unmatched_files: true
